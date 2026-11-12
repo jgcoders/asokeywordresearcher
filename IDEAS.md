@@ -8,6 +8,7 @@ i Google ich nie publikują.
 | Pomysł | Status | Kategoria |
 | --- | --- | --- |
 | [Aplikacja z codziennymi wyzwaniami ruchowymi](#aplikacja-z-codziennymi-wyzwaniami-ruchowymi) | odłożony na później | Health & Fitness |
+| [AI home designer](#ai-home-designer) | odłożony na później | Lifestyle / Graphics & Design |
 | [Inne sprawdzone nisze](#inne-sprawdzone-nisze) | odrzucone lub rezerwowe | różne |
 
 ---
@@ -107,6 +108,95 @@ Co decyduje o wyniku:
 
 ---
 
+## AI home designer
+
+**Status: odłożony na później.** Prosty w budowie, ale ogólna wersja wchodzi na
+rynek z silnym liderem, a każda generacja obrazu kosztuje. Sens ma tylko w niszy.
+
+### Pomysł
+
+Użytkownik robi zdjęcie pokoju, wybiera styl i typ pomieszczenia, a model AI
+generuje nowy wystrój z zachowaniem układu ścian, okien i perspektywy. Wynik:
+porównanie przed/po, zapis, udostępnienie.
+
+Rekomendowany wariant: **virtual staging dla agentów nieruchomości
+i wynajmujących** (zdjęcie pustego mieszkania → umeblowane). Klient biznesowy
+płaci regularnie, bo co miesiąc ma nowe oferty. Alternatywy: łazienka albo ogród.
+
+### Konkurencja (App Store USA, 12 listopada 2026 r.)
+
+„Mediana” to liczba ocen aplikacji w pierwszych 10 wynikach.
+
+| Fraza | Mediana ocen top 10 | Lider (oceny) | Wniosek |
+| --- | --- | --- | --- |
+| home design | 145 996 | Design Home (517 711) | zajęte |
+| interior design | 46 603 | Design Home (517 711) | zajęte |
+| ai home design | 34 874 | Home AI (160 901, wydana w 2024 r.) | zajęte |
+| room design | 25 815 | Redecor (271 574) | zajęte |
+| ai interior design | 23 772 | Home AI (160 901) | zajęte |
+| house design 3d | 19 176 | Home Design 3D (104 995) | zajęte |
+| floor plan | 12 598 | Home Planner AI (46 603) | zajęte |
+| exterior design ai | 10 884 | Home AI (160 901) | trudne |
+| ai architect | 9 585 | Home Planner AI (46 603) | trudne |
+| ai room planner | 6 214 | Home AI (160 901) | trudne |
+| room redesign | 3 108 | Design Home (517 711) | trudne |
+| room planner | 3 086 | Home AI (160 901) | trudne |
+| landscape design | 2 178 | Planner 5D (42 745) | średnie |
+| kitchen design | 1 672 | Houzz (324 996) | średnie |
+| furniture ar | 1 658 | Ashley (150 997) | średnie |
+| paint my room | 1 290 | 87 020 | średnie |
+| garden design ai | 1 195 | iScape (28 869) | średnie |
+| wall color visualizer | 749 | 11 720 | średnie |
+| bathroom design | 91 | Houzz (324 996) | do zdobycia, lider to ogólna platforma |
+| virtual staging | 14 | Home AI (160 901) | do zdobycia: 9 z 10 wyników poniżej 500 ocen, 5 wydanych w ostatnim roku |
+
+Wniosek: kategoria zarabia (Home AI zdobyła 160 901 ocen w dwa lata), ale ogólny
+„AI home designer” konkuruje z ugruntowanym liderem. Luki: virtual staging,
+łazienka, ogród.
+
+### Budowa
+
+- **Czas:** szacunkowo 3–5 tygodni dla jednej osoby na pierwszą wersję.
+- **Model AI:** gotowy model przez API (obraz na podstawie obrazu, z zachowaniem
+  struktury pomieszczenia). Bez trenowania własnego modelu. Dostawcę i model
+  wybrać po testach na prawdziwych zdjęciach.
+- **Serwer jest konieczny:** klucza API nie wolno trzymać w aplikacji. Minimum to
+  funkcja serwerowa (np. Cloud Functions, Cloudflare Workers), która sprawdza
+  kredyty użytkownika i dopiero wtedy wywołuje model. Serwer trzyma też saldo
+  kredytów.
+- **Koszt generacji:** z wiedzy ogólnej rząd kilku centów za obraz, zależnie od
+  modelu (do sprawdzenia w aktualnych cennikach). Limity i płatności muszą
+  działać od pierwszego dnia.
+- **Jakość:** model musi zachować układ pokoju (bez dorysowanych okien i krzywych
+  ścian). Dobór modelu, promptów i ustawień to większość pracy.
+- **KMP:** aparat i wybór zdjęć natywnie; ekrany, logika kredytów i komunikacja
+  z serwerem we wspólnym kodzie.
+- **Prywatność:** zdjęcia wnętrz to dane prywatne; polityka prywatności musi
+  opisywać, gdzie trafiają i jak długo są przechowywane.
+
+### Monetyzacja (natywne StoreKit 2 i Google Play Billing)
+
+- **Twardy paywall z okresem próbnym:** 1–3 darmowe generacje, potem płatność.
+- **Kredyty jako produkty zużywalne (consumable):** saldo trzymane na serwerze,
+  nie w telefonie.
+- **Subskrypcja z miesięczną pulą generacji** (tygodniowa i roczna), tak
+  zarabiają liderzy.
+- **Dla virtual staging:** plan biznesowy z większą pulą generacji i eksportem
+  w wysokiej rozdzielczości.
+- **Ryzyko utrzymania:** według relacji z raportu RevenueCat 2026 aplikacje AI
+  zarabiają ok. 41% więcej na użytkowniku, ale tracą subskrybentów ok. 30%
+  szybciej. Klient prywatny przerabia mieszkanie raz i rezygnuje.
+
+### Kiedy wrócić do tego pomysłu
+
+- Gdy będzie budżet na koszty generacji i serwer oraz plan dotarcia do agentów
+  nieruchomości (to klient poza wyszukiwarką App Store).
+- Przed startem: sprawdzić popularność fraz „virtual staging”, „bathroom design”,
+  „garden design ai” w Apple Search Ads, porównać ceny i jakość modeli na
+  20–30 prawdziwych zdjęciach pustych mieszkań.
+
+---
+
 ## Inne sprawdzone nisze
 
 | Nisza | Dane (App Store) | Ocena |
@@ -127,5 +217,6 @@ passport photo 10 071, business card scanner 10 175, citizenship test 2026 8 489
 
 - [RevenueCat: State of Subscription Apps 2026](https://www.revenuecat.com/state-of-subscription-apps-2026/)
 - [9to5Mac o raporcie RevenueCat 2026](https://9to5mac.com/?p=1042212)
+- [PPC Land: AI apps earn 41% more per user but churn 30% faster](https://ppc.land/ai-apps-earn-41-more-per-user-but-churn-30-faster-revenuecat-finds/)
 - [iTunes Search API, przykładowe zapytanie](https://itunes.apple.com/search?term=exercise+snacks&country=us&entity=software&limit=10)
   (ten sam adres z inną frazą i kodem kraju odtwarza każdy wiersz tabel)
