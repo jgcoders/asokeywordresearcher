@@ -7,42 +7,15 @@ i Google ich nie publikują.
 
 | Pomysł | Status | Kategoria |
 | --- | --- | --- |
-| [Fakturio: przeglądarka e-faktur](#fakturio-przeglądarka-e-faktur) | wybrany do budowy | Business / Utilities |
 | [Aplikacja z codziennymi wyzwaniami ruchowymi](#aplikacja-z-codziennymi-wyzwaniami-ruchowymi) | odłożony na później | Health & Fitness |
 | [Inne sprawdzone nisze](#inne-sprawdzone-nisze) | odrzucone lub rezerwowe | różne |
 
 ---
 
-## Fakturio: przeglądarka e-faktur
-
-**Status: wybrany do budowy.** Pełny raport ASO (słowa kluczowe, konkurencja,
-metadane, testy A/B, monetyzacja):
-<https://claude.ai/artifact/RWD1HB7jMVtPMzT2Tqg546>
-
-Aplikacja otwiera plik e-faktury (XML lub PDF z osadzonym XML), pokazuje go jako
-czytelną fakturę, sprawdza podstawową poprawność i eksportuje do PDF. Działa
-offline, bez kont i bez serwera.
-
-- **Rynki:** start w Niemczech (XRechnung, ZUGFeRD); potem Austria, Szwajcaria,
-  Francja (Factur-X), Włochy (FatturaPA / P7M), Polska (KSeF), Belgia (Peppol).
-- **Dowód popytu:** we Włoszech, gdzie e-faktury są obowiązkowe od 2019 r.,
-  aplikacja P7M Viewer ma 10 743 oceny w App Store.
-- **Konkurencja:** w Niemczech dla „e-rechnung viewer” mediana ocen w top 10 to 0;
-  żadna wyspecjalizowana przeglądarka nie ma więcej niż 3 ocen.
-- **Ryzyko:** co najmniej 6 konkurentów wyszło między czerwcem a październikiem
-  2026 r.; sufit przychodu na jeden kraj jest średni.
-- **Monetyzacja:** darmowy podgląd + Pro (eksport PDF, brak limitu, raport błędów,
-  archiwum). Start: 14,99–19,99 EUR jednorazowo lub 9,99–12,99 EUR rocznie.
-  Drugi etap: wystawianie e-faktur jako subskrypcja.
-- **Do sprawdzenia:** nazwa „Fakturio” jest wolna w App Store (Niemcy, Polska,
-  USA); nie sprawdzono Google Play, domeny ani rejestru znaków towarowych UE.
-
----
-
 ## Aplikacja z codziennymi wyzwaniami ruchowymi
 
-**Status: odłożony na później.** Wyższy sufit przychodu niż Fakturio, ale dużo
-silniejsza konkurencja i instalacje zależne od marketingu, a nie od wyszukiwania.
+**Status: odłożony na później.** Wysoki sufit przychodu, ale bardzo silna
+konkurencja i instalacje zależne od marketingu, a nie od wyszukiwania.
 
 ### Pomysł
 
@@ -124,16 +97,6 @@ Co decyduje o wyniku:
 - **Utrzymanie.** Aplikacje fitness mają wysoką rezygnację. Według RevenueCat
   2026 tańsze aplikacje zatrzymują 36% subskrybentów, droższe 23%, dlatego plan
   roczny płatny z góry jest ważniejszy niż miesięczny.
-
-### Porównanie z Fakturio
-
-| | Fakturio | Wyzwania ruchowe |
-| --- | --- | --- |
-| Sufit przychodu | średni | wysoki |
-| Konkurencja | prawie brak ocen u rywali | bardzo silna na głównych frazach |
-| Źródło instalacji | wyszukiwanie w sklepie | głównie marketing i wirusowość |
-| Wielkość aplikacji | mała | średnia: treści, animacje, powiadomienia, element społecznościowy |
-| Główne ryzyko | mały rynek | brak instalacji mimo dobrej aplikacji |
 
 ### Kiedy wrócić do tego pomysłu
 
