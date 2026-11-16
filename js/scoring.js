@@ -155,6 +155,25 @@ export function nicheReport(apps, { isGrossing = true, now = Date.now() } = {}) 
   };
 }
 
+/**
+ * Rank a category's Top Grossing chart for a newcomer.
+ *  room: how many earners are small (under 5k ratings), new, or neglected
+ *  size: how big the market is (typical top app's ratings, log scale), so
+ *        tiny categories where everyone is small don't win by default
+ *  score: weighted geometric mean (room 60%, size 40%)
+ */
+export function nicheScore(report) {
+  const room = Math.round(clamp(report.small * 1.2 + report.fresh * 0.8 + report.stale * 1.5));
+  // typical top app: 100 ratings → 0, 1k → 33, 10k → 67, 100k → 100
+  const size = Math.round(clamp((Math.log10((report.medianRatings || 0) + 1) - 2) * 33.3));
+  const score = Math.round(Math.pow(Math.max(room, 1), 0.6) * Math.pow(Math.max(size, 1), 0.4));
+  const sizeLabel = size >= 70 ? 'Big market' : size >= 35 ? 'Medium market' : 'Small market';
+  const verdict = score >= 65 ? { key: 'strong', label: 'Promising' }
+    : score >= 50 ? { key: 'maybe', label: 'Possible' }
+      : { key: 'weak', label: 'Tough' };
+  return { score, room, size, sizeLabel, verdict };
+}
+
 const STOP = new Set(
   ('the and for with your you my me our app apps a an of to in on by at or is it this that from free pro plus lite hd ' +
     'premium best top official new edition version mobile ios iphone ipad der die das und für mit von la le les de des et')

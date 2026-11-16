@@ -1,5 +1,5 @@
 import * as api from './api.js';
-import { keywordReport, nicheReport, titleIdeas, daysSince, mostCommon, verdictFor } from './scoring.js';
+import { keywordReport, nicheReport, nicheScore, titleIdeas, tokens, daysSince, mostCommon, verdictFor } from './scoring.js';
 
 // ---------- constants ----------
 const COUNTRIES = [
@@ -76,6 +76,8 @@ const state = {
   niche: { genreId: store.get('nicheGenre', '6013'), chart: store.get('nicheChart', 'grossing'), only: false, result: null, busy: false, error: null, token: 0 },
   kw: { text: '', result: null, busy: false, error: null, token: 0 },
   cmp: { text: '', rows: null, busy: false, error: null, token: 0 },
+  nicheMode: store.get('nicheMode', 'all') === 'one' ? 'one' : 'all',
+  auto: { busy: false, error: null, token: 0, done: 0, failed: 0, current: '', waiting: false, results: null, country: null, at: 0 },
   apps: new Map(), // id|country → app, for the details sheet
 };
 
@@ -175,6 +177,96 @@ async function runCompare(text) {
   refresh('compare');
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function summarizeNiche(r, name) {
+  const rep = r.report;
+  const ns = nicheScore(rep);
+  const examples = r.apps
+    .filter((a, i) => rep.flags[i].smallEarner && a.ratings > 0)
+    .slice(0, 2)
+    .map((a) => ({ name: a.name, rank: a.rank, ratings: a.ratings }));
+  return {
+    genreId: String(r.genreId), name, score: ns.score, verdict: ns.verdict, sizeLabel: ns.sizeLabel,
+    small: rep.small, fresh: rep.fresh, stale: rep.stale, median: rep.medianRatings,
+    ideas: pickIdeas(rep.ideas.map((i) => i.text), name), examples,
+  };
+}
+
+/** Phrases first, no words from the category's own name, no single words already inside a phrase. */
+function pickIdeas(ideas, categoryName, limit = 5) {
+  const cat = new Set(tokens(categoryName));
+  const isCat = (w) => cat.has(w) || cat.has(w + 's') || cat.has(w.replace(/s$/, ''));
+  const useful = ideas.filter((t) => !t.split(' ').every(isCat));
+  const phrases = useful.filter((t) => t.includes(' '));
+  const inPhrase = new Set(phrases.flatMap((t) => t.split(' ')));
+  const words = useful.filter((t) => !t.includes(' ') && !inPhrase.has(t));
+  return [...phrases, ...words].slice(0, limit);
+}
+
+/** Load the last saved auto-scan for the current country, unless a scan is running. */
+function loadAuto() {
+  const a = state.auto;
+  if (a.busy || a.country === state.country) return;
+  const saved = store.get('autoscan:' + state.country, null);
+  Object.assign(a, { country: state.country, results: saved?.results || null, at: saved?.at || 0, error: null, failed: 0 });
+}
+
+async function runAutoScan() {
+  const a = state.auto;
+  const cc = state.country;
+  const token = ++a.token;
+  Object.assign(a, { busy: true, error: null, done: 0, failed: 0, current: '', waiting: false, results: [], country: cc, at: 0 });
+  refresh('niches');
+  for (const [id, name] of GENRES) {
+    if (token !== a.token) return;
+    a.current = name;
+    refresh('niches');
+    let r = null;
+    for (let attempt = 0; attempt < 2 && !r; attempt++) {
+      try {
+        r = await scanNiche(String(id), cc, 'grossing');
+      } catch (e) {
+        if (!(e instanceof api.RateLimitError)) break; // skip this category, keep going
+        if (attempt === 0) {
+          a.waiting = true;
+          refresh('niches');
+          await sleep(30000);
+          a.waiting = false;
+          if (token !== a.token) return;
+        } else {
+          a.error = errorText(e);
+        }
+      }
+    }
+    if (token !== a.token) return;
+    if (a.error) break;
+    if (r) {
+      remember(r.apps);
+      a.results.push(summarizeNiche(r, name));
+      a.results.sort((x, y) => y.score - x.score);
+    } else {
+      a.failed++;
+    }
+    a.done++;
+    refresh('niches');
+  }
+  if (token !== a.token) return;
+  a.busy = false;
+  a.at = Date.now();
+  if (!a.error && a.results.length) store.set('autoscan:' + cc, { at: a.at, results: a.results });
+  refresh('niches');
+}
+
+function sinceText(ts) {
+  const m = Math.round((Date.now() - ts) / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m} min ago`;
+  const h = Math.round(m / 60);
+  if (h < 48) return `${h} h ago`;
+  return `${Math.round(h / 24)} days ago`;
+}
+
 function checkKeyword(text) {
   state.kw.text = text;
   go('keyword');
@@ -231,16 +323,78 @@ const errorBox = (msg) => `<p class="error">${esc(msg)}</p>`;
 
 // ---------- views ----------
 const VIEWS = {
-  niches: { title: 'Niches', shell: nichesShell, out: nichesOut },
+  niches: { title: 'Niches', shell: () => (state.nicheMode === 'all' ? autoShell() : oneShell()), out: () => (state.nicheMode === 'all' ? autoOut() : oneOut()) },
   keyword: { title: 'Keyword', shell: keywordShell, out: keywordOut },
   compare: { title: 'Countries', shell: compareShell, out: compareOut },
   saved: { title: 'Saved', shell: () => '<div id="out"></div>', out: savedOut },
 };
 
 // Niches
-function nichesShell() {
+const modeSwitch = () => `
+  <div class="seg" role="group" aria-label="Scan type">
+    <button type="button" data-mode="all" aria-pressed="${state.nicheMode === 'all'}">All categories</button>
+    <button type="button" data-mode="one" aria-pressed="${state.nicheMode === 'one'}">One category</button>
+  </div>`;
+
+function autoShell() {
+  loadAuto();
+  return `${modeSwitch()}
+  <p class="intro">Scans Top Grossing in all ${GENRES.length} categories and ranks them by how much room there is for small apps, weighed against market size.</p>
+  <button class="btn" id="autoBtn" type="button" data-act="autoscan">Scan all categories</button>
+  <div id="out"></div>`;
+}
+
+function nicheCard(n, i) {
+  const ex = n.examples[0];
+  return `<li class="niche">
+    <div class="niche-head">
+      <span class="niche-rank">${i}</span>
+      <div class="niche-title"><b>${esc(n.name)}</b><span>${esc(n.sizeLabel)} · typical top app has ${fmt(n.median)} ratings</span></div>
+      <span class="score-pill ${n.verdict.key}" aria-label="Niche score ${n.score}, ${esc(n.verdict.label)}">${n.score}</span>
+    </div>
+    <div class="tags">
+      <span class="tag good">${n.small} small earners</span>
+      <span class="tag info">${n.fresh} new</span>
+      ${n.stale ? `<span class="tag warn">${n.stale} neglected</span>` : ''}
+    </div>
+    ${ex ? `<p class="niche-ex">Example: <b>${esc(ex.name)}</b> is #${ex.rank} in Top Grossing with ${fmt(ex.ratings)} ratings.</p>` : ''}
+    ${n.ideas.length ? `<div class="chips">${n.ideas.map((k) => `<button class="chip" type="button" data-kw="${esc(k)}">${esc(k)}</button>`).join('')}</div>` : ''}
+    <button class="linklike" type="button" data-open-genre="${esc(n.genreId)}">See the full chart →</button>
+  </li>`;
+}
+
+function autoOut() {
+  const a = state.auto;
+  const parts = [];
+  if (a.busy) {
+    const pct = Math.round((a.done / GENRES.length) * 100);
+    const msg = a.waiting
+      ? 'Apple asked us to slow down. Waiting 30 seconds, then continuing…'
+      : `Scanning ${a.current} · ${Math.min(a.done + 1, GENRES.length)} of ${GENRES.length}`;
+    parts.push(`<div class="progress-card"><div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><i style="width:${pct}%"></i></div><p class="note">${esc(msg)}</p></div>`);
+  }
+  if (a.error) parts.push(errorBox(`${a.error} Categories scanned so far are below.`));
+  const res = a.country === state.country ? a.results : null;
+  if (!res || !res.length) {
+    if (!a.busy) {
+      parts.push(`<div class="empty"><p>Tap <b>Scan all categories</b> to rank every category in ${esc(CNAME[state.country])} by how open it is to small apps.</p>
+        <p>The first scan takes 1–2 minutes. Scanning again within 6 hours is almost instant.</p></div>`);
+    }
+    return parts.join('');
+  }
+  if (!a.busy) {
+    const best = res.filter((n) => n.verdict.key === 'strong').slice(0, 3).map((n) => n.name);
+    const lead = best.length ? `Best bets in ${CNAME[state.country]}: <b>${best.map(esc).join(', ')}</b>.` : `No category in ${esc(CNAME[state.country])} scores as Promising right now. Look at the Possible ones.`;
+    parts.push(`<p class="read">${lead} Scanned ${sinceText(a.at)}.${a.failed ? ` ${a.failed} ${a.failed === 1 ? 'category' : 'categories'} couldn't be loaded.` : ''}</p>`);
+  }
+  parts.push(`<ol class="niche-list">${res.map((n, i) => nicheCard(n, i + 1)).join('')}</ol>`);
+  parts.push('<p class="note">Score = room for small apps (small earners, new apps, neglected apps) weighed against market size. 65+ Promising, 50–64 Possible. Tap a keyword to score it.</p>');
+  return parts.join('');
+}
+
+function oneShell() {
   const s = state.niche;
-  return `
+  return `${modeSwitch()}
   <p class="intro">See which apps earn money in a category and how many of them are small. Many small earners means a newcomer can get in.</p>
   <form class="form" id="nicheForm">
     <div class="row">
@@ -256,7 +410,7 @@ function nichesShell() {
   <div id="out"></div>`;
 }
 
-function nichesOut() {
+function oneOut() {
   const s = state.niche;
   if (s.busy) return loading(`Reading ${CHART_LABEL[s.chart]} for ${GNAME[s.genreId]} in ${CNAME[state.country]}…`);
   if (s.error) return errorBox(s.error);
@@ -447,8 +601,9 @@ function refresh(name) {
   if (current() !== name) return;
   const out = $('#out');
   if (out) out.innerHTML = VIEWS[name].out();
-  const busy = { niches: state.niche.busy, keyword: state.kw.busy, compare: state.cmp.busy }[name];
-  const btn = $('#nicheBtn') || $('#kwBtn') || $('#cmpBtn');
+  const nicheBusy = state.nicheMode === 'all' ? state.auto.busy : state.niche.busy;
+  const busy = { niches: nicheBusy, keyword: state.kw.busy, compare: state.cmp.busy }[name];
+  const btn = $('#autoBtn') || $('#nicheBtn') || $('#kwBtn') || $('#cmpBtn');
   if (btn) btn.disabled = !!busy;
 }
 
@@ -558,6 +713,21 @@ view.addEventListener('click', (e) => {
     return;
   }
   const act = t.closest('[data-act]')?.dataset.act;
+  const mode = t.closest('[data-mode]')?.dataset.mode;
+  if (mode && mode !== state.nicheMode) { state.nicheMode = mode; store.set('nicheMode', mode); render(); return; }
+  const genre = t.closest('[data-open-genre]')?.dataset.openGenre;
+  if (genre) {
+    Object.assign(state.niche, { genreId: genre, chart: 'grossing', only: false });
+    store.set('nicheGenre', genre);
+    store.set('nicheChart', 'grossing');
+    state.nicheMode = 'one';
+    store.set('nicheMode', 'one');
+    render();
+    window.scrollTo(0, 0);
+    runNiche();
+    return;
+  }
+  if (act === 'autoscan' && !state.auto.busy) runAutoScan();
   if (act === 'filter') { state.niche.only = !state.niche.only; refresh('niches'); }
   if (act === 'save' && state.kw.result) { toggleSaved(state.kw.result); refresh('keyword'); }
   if (act === 'compare' && state.kw.result) { state.cmp.text = state.kw.result.kw; go('compare'); runCompare(state.kw.result.kw); }
@@ -615,7 +785,8 @@ countrySel.addEventListener('change', () => {
   state.niche.result = null;
   state.kw.result = null;
   const name = current();
-  if (name === 'niches' && had.niche) runNiche();
+  if (name === 'niches' && state.nicheMode === 'all') { loadAuto(); refresh(name); }
+  else if (name === 'niches' && had.niche) runNiche();
   else if (name === 'keyword' && had.kw) runKeyword(had.kw);
   else refresh(name);
 });

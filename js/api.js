@@ -148,8 +148,8 @@ export function chart(country, genreId, type = 'grossing') {
 /** Full details (ratings, dates, price) for a list of app ids. Returns a Map id → app. */
 export async function lookup(ids, country) {
   const out = new Map();
-  for (let i = 0; i < ids.length; i += 50) {
-    const batch = ids.slice(i, i + 50);
+  for (let i = 0; i < ids.length; i += 100) {
+    const batch = ids.slice(i, i + 100);
     const apps = await cached(`l:${country}:${batch.join(',')}`, async () => {
       const d = await getJSON(`${BASE}/lookup?id=${batch.join(',')}&country=${country}`);
       return (d.results || []).map(normApp);

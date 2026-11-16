@@ -8,7 +8,8 @@ It runs entirely in the browser. There is no server and no API key: it reads App
 
 | Tab | What you get |
 |---|---|
-| **Niches** | Scan a category's Top Grossing, Top Paid or Top Free chart in one country. Shows how many of the top 100 are small earners (under 5k ratings), new (released in the last 18 months) or neglected (no update in a year), plus keyword ideas taken from the names of small and new apps. |
+| **Niches → All categories** | One tap scans Top Grossing in all 24 categories and ranks them by **Niche score**: room for small apps (small earners, new apps, neglected apps) weighed against market size. Each card shows an example small earner and keyword ideas. Results are saved per country. |
+| **Niches → One category** | Scan a category's Top Grossing, Top Paid or Top Free chart in one country. Shows how many of the top 100 are small earners (under 5k ratings), new (released in the last 18 months) or neglected (no update in a year), plus keyword ideas taken from the names of small and new apps. |
 | **Keyword** | Score a search term from its top 10 App Store results: **Demand**, **Ease** and **Money**, combined into an **Opportunity** score (0–100). |
 | **Countries** | Score one keyword in the US, UK, Canada, Australia, Germany and Japan side by side. |
 | **Saved** | Keywords you saved on this device, with "Copy as CSV". |
@@ -24,6 +25,8 @@ Apple publishes no download or search-volume numbers, so the scores use stand-in
 - **Opportunity**: weighted geometric mean (demand 35%, ease 40%, money 25%), so one very weak part pulls the total down. 60+ is **Strong**, 40–59 **Worth a look**, under 40 **Weak**.
 
 Treat scores as a way to find niches worth investigating, not as proof. Ratings counts are a proxy for downloads.
+
+**Niche score** (All categories): room = small earners × 1.2 + new apps × 0.8 + neglected apps × 1.5 (capped at 100); size = typical top app's ratings on a log scale (1k = 33, 10k = 67, 100k = 100); score = room^0.6 × size^0.4. 65+ is **Promising**, 50–64 **Possible**. Market size is in the formula so tiny categories, where every app is small, don't win by default.
 
 The formulas live in `js/scoring.js`; thresholds are in `LIMITS` at the top.
 

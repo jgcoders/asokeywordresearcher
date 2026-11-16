@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  keywordReport, nicheReport, titleIdeas, titleMatches, appFlags, median, mostCommon, verdictFor, DAY,
+  keywordReport, nicheReport, nicheScore, titleIdeas, titleMatches, appFlags, median, mostCommon, verdictFor, DAY,
 } from '../js/scoring.js';
 
 const NOW = Date.parse('2026-11-15T00:00:00Z');
@@ -94,6 +94,20 @@ test('nicheReport counts small earners', () => {
   assert.equal(r.total, 10);
   assert.equal(r.small, 3);
   assert.match(r.read, /Many small apps/);
+});
+
+test('nicheScore balances room for newcomers against market size', () => {
+  // Real US Top Grossing numbers (Nov 2026)
+  const travel = nicheScore({ small: 57, fresh: 27, stale: 1, medianRatings: 3135 });
+  const devTools = nicheScore({ small: 92, fresh: 45, stale: 5, medianRatings: 91 });
+  const health = nicheScore({ small: 8, fresh: 6, stale: 1, medianRatings: 77439 });
+  assert.equal(devTools.room, 100);
+  assert.ok(devTools.size < 5, 'tiny market');
+  assert.ok(travel.score > health.score, `${travel.score} vs ${health.score}`);
+  assert.ok(travel.score > devTools.score, `${travel.score} vs ${devTools.score}`);
+  assert.equal(health.sizeLabel, 'Big market');
+  assert.equal(travel.verdict.key, 'strong');
+  for (const r of [travel, devTools, health]) assert.ok(r.score >= 0 && r.score <= 100);
 });
 
 test('mostCommon', () => {
