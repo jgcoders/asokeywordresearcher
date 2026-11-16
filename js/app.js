@@ -1,5 +1,6 @@
 import * as api from './api.js';
 import * as cs from './complaints.js';
+import * as ideas from './ideas.js';
 import { keywordReport, nicheReport, nicheScore, titleIdeas, tokens, daysSince, mostCommon, verdictFor } from './scoring.js';
 
 // ---------- constants ----------
@@ -71,6 +72,8 @@ function toast(msg) {
   toastTimer = setTimeout(() => { t.hidden = true; }, 2200);
 }
 
+const sheet = $('#sheet'); // details / idea editor dialog
+
 // ---------- state ----------
 const state = {
   country: CNAME[store.get('country', 'us')] ? store.get('country', 'us') : 'us',
@@ -79,6 +82,7 @@ const state = {
   cmp: { text: '', rows: null, busy: false, error: null, token: 0 },
   nicheMode: store.get('nicheMode', 'all') === 'one' ? 'one' : 'all',
   auto: { busy: false, error: null, token: 0, done: 0, failed: 0, current: '', waiting: false, results: null, country: null, at: 0 },
+  ideasFilter: 'all',
   cs: { key: null, busy: false, step: '', error: null, needsKey: false, keyForm: false, entry: null, token: 0 },
   apps: new Map(), // id|country → app, for the details sheet
 };
@@ -140,6 +144,7 @@ async function runKeyword(text) {
     if (token !== s.token) return;
     remember(r.apps);
     s.result = r;
+    syncIdea(r);
   } catch (e) {
     if (token !== s.token) return;
     s.error = errorText(e);
@@ -345,6 +350,7 @@ async function runSummary(fresh = false) {
     });
     if (token !== s.token) return;
     s.entry = entry;
+    attachSummaryToIdea(r, entry);
   } catch (e) {
     if (token !== s.token) return;
     s.error = e instanceof cs.SummaryError ? e.message : "Couldn't summarize the reviews. Try again in a minute.";
@@ -422,6 +428,7 @@ const VIEWS = {
   niches: { title: 'Niches', shell: () => (state.nicheMode === 'all' ? autoShell() : oneShell()), out: () => (state.nicheMode === 'all' ? autoOut() : oneOut()) },
   keyword: { title: 'Keyword', shell: keywordShell, out: keywordOut },
   compare: { title: 'Countries', shell: compareShell, out: compareOut },
+  ideas: { title: 'Ideas', shell: ideasShell, out: ideasOut },
   saved: { title: 'Saved', shell: () => '<div id="out"></div>', out: savedOut },
 };
 
@@ -597,6 +604,7 @@ function keywordOut() {
     <div class="actions">
       <button class="btn small" type="button" data-act="save">${saved ? 'Saved ✓' : 'Save'}</button>
       <button class="btn small ghost" type="button" data-act="compare">Compare countries</button>
+      <button class="btn small ghost" type="button" data-act="idea-from-kw">${ideas.findIdea(ideas.loadIdeas(), r.kw, r.country) ? 'Open idea' : 'Add to ideas'}</button>
     </div>
   </div>
   <div class="meters">
@@ -686,10 +694,281 @@ function savedListHtml() {
       <span class="body"><span class="kw">${esc(x.kw)}</span>
       <span class="meta">${esc(CNAME[x.cc] || x.cc)} · D ${x.demand} · E ${x.ease} · M ${x.money} · ${new Date(x.date).toLocaleDateString()}</span></span>
     </button>
+    <button class="btn ghost small" type="button" data-idea-saved="${i}">Idea</button>
     <button class="close" type="button" data-del="${i}" aria-label="Remove ${esc(x.kw)}">×</button>
   </li>`).join('')}</ul>
   <div class="row"><button class="btn ghost" type="button" data-act="csv">Copy as CSV</button></div>
   <div id="csvFallback"></div>`;
+}
+
+// ---------- idea board ----------
+function putIdea(idea) {
+  const list = ideas.loadIdeas();
+  idea.updatedAt = Date.now();
+  const at = list.findIndex((x) => x.id === idea.id);
+  if (at >= 0) list[at] = idea;
+  else list.unshift(idea);
+  if (!ideas.saveIdeas(list)) toast("Couldn't save. This browser is blocking storage.");
+}
+
+const getIdea = (id) => ideas.loadIdeas().find((x) => x.id === id);
+
+function syncIdea(r) {
+  if (!r || r.report.empty) return;
+  const idea = ideas.findIdea(ideas.loadIdeas(), r.kw, r.country);
+  if (!idea) return;
+  idea.snapshot = ideas.snapshotOf(r.report);
+  if (!idea.category && r.genreName) idea.category = r.genreName;
+  putIdea(idea);
+}
+
+function attachSummaryToIdea(r, entry) {
+  const idea = ideas.findIdea(ideas.loadIdeas(), r.kw, r.country);
+  if (!idea) return;
+  idea.summary = ideas.summaryOf(entry);
+  putIdea(idea);
+}
+
+function addIdea(fields) {
+  const existing = fields.kw ? ideas.findIdea(ideas.loadIdeas(), fields.kw, fields.cc) : null;
+  if (existing) return openIdea(existing.id);
+  const idea = ideas.createIdea({ ...fields, summary: fields.kw ? cs.getCached(fields.kw, fields.cc) : null });
+  putIdea(idea);
+  toast('Added to Ideas');
+  openIdea(idea.id);
+}
+
+function ideasShell() {
+  return `
+  <p class="intro">Turn promising keywords into app ideas. Write down why you'd win and how you'll charge, and see how ready each idea is. Ideas stay on this device.</p>
+  <div class="row">
+    <button class="btn" type="button" data-act="idea-new">New idea</button>
+    <button class="btn ghost" type="button" data-act="idea-copy">Copy all as text</button>
+  </div>
+  <div id="out"></div>`;
+}
+
+function ideaCard(i) {
+  const r = ideas.readiness(i);
+  const snap = i.snapshot;
+  const meta = [i.kw ? `"${i.kw}"` : '', CNAME[i.cc] || '', i.category].filter(Boolean).join(' · ');
+  const blurb = i.why || i.summary?.pitch || '';
+  return `<li><button class="idea" type="button" data-idea="${esc(i.id)}">
+    <span class="idea-head"><b>${esc(i.name || 'Untitled idea')}</b>${snap ? `<span class="score-pill ${verdictFor(snap.opp).key}">${snap.opp}</span>` : ''}</span>
+    ${meta ? `<span class="idea-meta">${esc(meta)}</span>` : ''}
+    <span class="tags">
+      <span class="tag status-${esc(i.status)}">${esc(ideas.STATUS_LABEL[i.status] || i.status)}</span>
+      ${i.priceModel ? `<span class="tag info">${esc(ideas.PRICE_LABEL[i.priceModel])}${i.price ? ` · ${esc(i.price)}` : ''}</span>` : ''}
+      <span class="tag ${r.done === r.total ? 'good' : 'info'}">Ready ${r.done}/${r.total}</span>
+    </span>
+    ${blurb ? `<span class="idea-why">${esc(blurb)}</span>` : ''}
+  </button></li>`;
+}
+
+function ideasOut() {
+  const list = ideas.loadIdeas().sort((a, b) => b.updatedAt - a.updatedAt);
+  if (!list.length) {
+    return `<div class="empty"><p>No ideas yet.</p>
+      <p>Check a keyword and tap <b>Add to ideas</b>, or tap <b>New idea</b> to start from scratch.</p></div>`;
+  }
+  const f = state.ideasFilter;
+  const count = (k) => (k === 'all' ? list.length : list.filter((i) => i.status === k).length);
+  const chips = [['all', 'All'], ...ideas.STATUSES]
+    .map(([k, l]) => `<button class="chip" type="button" data-ifilter="${k}" aria-pressed="${f === k}">${l}<span class="n">${count(k)}</span></button>`)
+    .join('');
+  const shown = list.filter((i) => f === 'all' || i.status === f);
+  return `<div class="chips">${chips}</div>
+  ${shown.length ? `<ul class="idea-list">${shown.map(ideaCard).join('')}</ul>` : '<div class="empty"><p>No ideas with this status.</p></div>'}
+  <div id="copyFallback"></div>`;
+}
+
+const options = (pairs, value) => pairs.map(([k, l]) => `<option value="${esc(k)}"${String(k) === String(value) ? ' selected' : ''}>${esc(l)}</option>`).join('');
+
+function ideaScoresHtml(i) {
+  const s = i.snapshot;
+  const check = i.kw ? `<button class="btn small ghost" type="button" data-act="idea-recheck">${s ? 'Check again' : 'Check keyword'}</button>` : '';
+  if (!s) return `<p class="note">${i.kw ? 'No scores yet.' : 'Add a keyword to score this idea.'}</p>${check}`;
+  return `<div class="facts">
+      <div><b>${s.opp}</b><span>opportunity</span></div>
+      <div><b>${s.demand}</b><span>demand</span></div>
+      <div><b>${s.ease}</b><span>ease</span></div>
+      <div><b>${s.money}</b><span>money</span></div>
+    </div>
+    <p class="note">Checked ${sinceText(s.at)} in ${esc(CNAME[i.cc] || i.cc)}. Scores update whenever you check this keyword again.</p>
+    ${check}`;
+}
+
+function ideaSummaryHtml(i) {
+  const sm = i.summary;
+  if (!sm) {
+    return `<p class="note">Summarize complaints for "${esc(i.kw || 'its keyword')}" on the Keyword tab and they'll show up here.</p>`;
+  }
+  return `${sm.pitch ? `<div class="cs-pitch"><span>Pitch</span><p>${esc(sm.pitch)}</p></div>` : ''}
+    ${sm.complaints.length ? `<ul class="cs-features">${sm.complaints.map((c) => `<li><b>${esc(c.theme)}</b><span>${c.mentions} ${c.mentions === 1 ? 'mention' : 'mentions'}</span></li>`).join('')}</ul>` : ''}`;
+}
+
+const READY_HINT = {
+  score: 'From the keyword score',
+  complaintOk: 'From the complaint summary',
+  price: "From How you'll charge",
+  why: "Write at least a sentence in Why I'd win",
+};
+
+function readyHtml(i) {
+  return ideas.readiness(i).items.map((it) => {
+    const manual = it.key === 'buildable' || (it.key === 'complaintOk' && !it.auto);
+    if (manual) {
+      return `<li class="${it.done ? 'done' : ''}"><label><input type="checkbox" id="if-${it.key}" name="${it.key}"${it.done ? ' checked' : ''}><span>${esc(it.label)}</span></label></li>`;
+    }
+    return `<li class="${it.done ? 'done' : ''}"><span class="mark" aria-hidden="true">${it.done ? '✓' : '○'}</span><span>${esc(it.label)}<small>${esc(READY_HINT[it.key] || '')}</small></span></li>`;
+  }).join('');
+}
+
+function openIdea(id) {
+  const i = getIdea(id);
+  if (!i) return;
+  sheet.dataset.mode = 'idea';
+  sheet.dataset.idea = id;
+  sheet.innerHTML = `
+  <div class="sheet-head">
+    <div class="t"><b>Idea</b><span id="ideaSaved">Changes save automatically</span></div>
+    <button class="close" type="button" data-close aria-label="Close">×</button>
+  </div>
+  <form class="sheet-body idea-form" id="ideaForm" autocomplete="off">
+    <label class="field"><span>Name</span><input type="text" id="if-name" name="name" value="${esc(i.name)}"></label>
+    <div class="row">
+      <label class="field"><span>Status</span><select class="input" id="if-status" name="status">${options(ideas.STATUSES, i.status)}</select></label>
+      <label class="field"><span>Country</span><select class="input" id="if-cc" name="cc">${options(COUNTRIES.map(([c, n]) => [c, n]), i.cc)}</select></label>
+    </div>
+    <div class="row">
+      <label class="field"><span>Keyword</span><input type="text" id="if-kw" name="kw" value="${esc(i.kw)}" autocapitalize="none" autocorrect="off"></label>
+      <label class="field"><span>Category</span><select class="input" id="if-category" name="category">${options([['', '–'], ...GENRES.map(([, n]) => [n, n])], i.category)}</select></label>
+    </div>
+    <div class="row">
+      <label class="field"><span>How you'll charge</span><select class="input" id="if-priceModel" name="priceModel">${options(ideas.PRICE_MODELS, i.priceModel)}</select></label>
+      <label class="field"><span>Price</span><input type="text" id="if-price" name="price" value="${esc(i.price)}" placeholder="e.g. $4.99/month"></label>
+    </div>
+    <label class="field"><span>Why I'd win</span><textarea id="if-why" name="why" rows="3" placeholder="What will you do better than the top apps?">${esc(i.why)}</textarea></label>
+    <section class="section"><h3>Scores</h3><div id="ideaScores">${ideaScoresHtml(i)}</div></section>
+    <section class="section"><h3>What users complain about</h3><div id="ideaSummary">${ideaSummaryHtml(i)}</div></section>
+    <section class="section"><h3>Ready to build?</h3><ul class="ready" id="ideaReady">${readyHtml(i)}</ul></section>
+    <label class="field"><span>Notes</span><textarea id="if-notes" name="notes" rows="4" placeholder="Anything else: features, names, links">${esc(i.notes)}</textarea></label>
+    <div id="ideaDelete"><button class="btn danger small" type="button" data-act="idea-delete">Delete idea</button></div>
+  </form>`;
+  if (!sheet.open) sheet.showModal();
+  sheet.querySelector('.sheet-body').scrollTop = 0;
+}
+
+let ideaSaveTimer = null;
+
+function saveIdeaForm() {
+  clearTimeout(ideaSaveTimer);
+  ideaSaveTimer = null;
+  const form = $('#ideaForm', sheet);
+  if (!form || sheet.dataset.mode !== 'idea') return;
+  const i = getIdea(sheet.dataset.idea);
+  if (!i) return;
+  const val = (name) => form.elements[name]?.value ?? '';
+  const before = { kw: i.kw, cc: i.cc };
+  Object.assign(i, {
+    name: val('name').trim(),
+    status: val('status'),
+    cc: val('cc'),
+    kw: val('kw').trim(),
+    category: val('category'),
+    priceModel: val('priceModel'),
+    price: val('price').trim(),
+    why: val('why'),
+    notes: val('notes'),
+  });
+  if (form.elements.buildable) i.buildable = form.elements.buildable.checked;
+  if (form.elements.complaintOk) i.complaintOk = form.elements.complaintOk.checked;
+  const moved = before.kw.toLowerCase() !== i.kw.toLowerCase() || before.cc !== i.cc;
+  if (moved) {
+    // Scores and complaints belong to a keyword in a country.
+    i.snapshot = null;
+    i.summary = i.kw ? ideas.summaryOf(cs.getCached(i.kw, i.cc)) : null;
+  }
+  putIdea(i);
+  if (moved) {
+    $('#ideaScores', sheet).innerHTML = ideaScoresHtml(i);
+    $('#ideaSummary', sheet).innerHTML = ideaSummaryHtml(i);
+  }
+  const ready = $('#ideaReady', sheet);
+  if (ready) {
+    const fresh = document.createElement('ul');
+    fresh.innerHTML = readyHtml(i);
+    const sameShape = fresh.children.length === ready.children.length
+      && [...ready.children].every((li, n) => !!li.querySelector('input') === !!fresh.children[n].querySelector('input'));
+    if (!sameShape) ready.innerHTML = fresh.innerHTML;
+    else {
+      // Keep checkbox rows in place (so focus stays put) and refresh everything else.
+      [...ready.children].forEach((li, n) => {
+        const f = fresh.children[n];
+        if (li.querySelector('input')) li.className = f.className;
+        else li.replaceWith(f.cloneNode(true));
+      });
+    }
+  }
+  const savedNote = $('#ideaSaved', sheet);
+  if (savedNote) savedNote.textContent = 'Saved';
+}
+
+sheet.addEventListener('input', (e) => {
+  if (sheet.dataset.mode !== 'idea' || !e.target.closest('#ideaForm')) return;
+  clearTimeout(ideaSaveTimer);
+  ideaSaveTimer = setTimeout(saveIdeaForm, 400);
+});
+sheet.addEventListener('change', (e) => {
+  if (sheet.dataset.mode !== 'idea' || !e.target.closest('#ideaForm')) return;
+  saveIdeaForm();
+});
+sheet.addEventListener('submit', (e) => { e.preventDefault(); saveIdeaForm(); });
+sheet.addEventListener('close', () => {
+  if (sheet.dataset.mode === 'idea') {
+    if (ideaSaveTimer) saveIdeaForm();
+    sheet.dataset.mode = '';
+    const name = current();
+    if (name === 'ideas' || name === 'keyword') refresh(name);
+  }
+});
+
+function ideaSheetAction(act) {
+  const i = getIdea(sheet.dataset.idea);
+  if (!i) return;
+  if (act === 'idea-recheck') {
+    saveIdeaForm();
+    sheet.close();
+    setCountry(i.cc);
+    checkKeyword(i.kw);
+  } else if (act === 'idea-delete') {
+    $('#ideaDelete', sheet).innerHTML = `<div class="row" style="align-items:center"><span>Delete "${esc(i.name || 'Untitled idea')}"?</span>
+      <button class="btn danger small" type="button" data-act="idea-delete-yes" style="flex:0 0 auto">Delete</button>
+      <button class="btn ghost small" type="button" data-act="idea-delete-no" style="flex:0 0 auto">Cancel</button></div>`;
+  } else if (act === 'idea-delete-no') {
+    $('#ideaDelete', sheet).innerHTML = '<button class="btn danger small" type="button" data-act="idea-delete">Delete idea</button>';
+  } else if (act === 'idea-delete-yes') {
+    clearTimeout(ideaSaveTimer);
+    ideaSaveTimer = null;
+    ideas.saveIdeas(ideas.loadIdeas().filter((x) => x.id !== i.id));
+    sheet.close();
+    toast('Idea deleted');
+  }
+}
+
+function copyText(text, boxId, okMsg) {
+  const fallback = () => {
+    const box = $('#' + boxId);
+    if (box) {
+      box.innerHTML = `<p class="note">Couldn't copy automatically. Select the text below and copy it.</p><textarea readonly rows="8" class="copy-box">${esc(text)}</textarea>`;
+      box.querySelector('textarea').select();
+    }
+  };
+  try {
+    navigator.clipboard.writeText(text).then(() => toast(okMsg), fallback);
+  } catch {
+    fallback();
+  }
 }
 
 // ---------- router ----------
@@ -725,12 +1004,12 @@ function go(name) {
 window.addEventListener('hashchange', () => { render(); window.scrollTo(0, 0); });
 
 // ---------- details sheet ----------
-const sheet = $('#sheet');
 
 async function openApp(key) {
   const a = state.apps.get(key);
   if (!a) return;
-  const ideas = titleIdeas([a.name], { min: 1, limit: 8 });
+  const nameIdeas = titleIdeas([a.name], { min: 1, limit: 8 });
+  sheet.dataset.mode = 'app';
   sheet.innerHTML = `
   <div class="sheet-head">
     ${a.icon ? `<img src="${esc(a.icon)}" alt="" width="56" height="56">` : ''}
@@ -747,7 +1026,7 @@ async function openApp(key) {
       <div><b>${esc(a.genre || GNAME[a.genreId] || '–')}</b><span>category</span></div>
     </div>
     ${a.url ? `<a class="store-link" href="${esc(a.url)}" target="_blank" rel="noopener">Open in App Store ↗</a>` : ''}
-    ${ideas.length ? `<section class="section"><h3>Score words from its name</h3><div class="chips">${ideas.map((i) => `<button class="chip" type="button" data-kw="${esc(i.text)}">${esc(i.text)}</button>`).join('')}</div></section>` : ''}
+    ${nameIdeas.length ? `<section class="section"><h3>Score words from its name</h3><div class="chips">${nameIdeas.map((i) => `<button class="chip" type="button" data-kw="${esc(i.text)}">${esc(i.text)}</button>`).join('')}</div></section>` : ''}
     <section class="section">
       <h3>What users complain about</h3>
       <div id="complaints">${loading('Reading recent reviews…')}</div>
@@ -777,7 +1056,9 @@ async function openApp(key) {
 sheet.addEventListener('click', (e) => {
   if (e.target === sheet || e.target.closest('[data-close]')) { sheet.close(); return; }
   const kw = e.target.closest('[data-kw]');
-  if (kw) { sheet.close(); checkKeyword(kw.dataset.kw); }
+  if (kw) { sheet.close(); checkKeyword(kw.dataset.kw); return; }
+  const act = e.target.closest('[data-act]')?.dataset.act;
+  if (act && act.startsWith('idea-')) ideaSheetAction(act);
 });
 
 // ---------- events ----------
@@ -819,6 +1100,16 @@ view.addEventListener('click', (e) => {
     if (x) { setCountry(x.cc); checkKeyword(x.kw); }
     return;
   }
+  const ideaBtn = t.closest('[data-idea]');
+  if (ideaBtn) return openIdea(ideaBtn.dataset.idea);
+  const filter = t.closest('[data-ifilter]');
+  if (filter) { state.ideasFilter = filter.dataset.ifilter; refresh('ideas'); return; }
+  const fromSaved = t.closest('[data-idea-saved]');
+  if (fromSaved) {
+    const x = savedList()[Number(fromSaved.dataset.ideaSaved)];
+    if (x) addIdea({ kw: x.kw, cc: x.cc, report: { empty: false, opportunity: x.opp, demand: x.demand, ease: x.ease, money: x.money } });
+    return;
+  }
   const del = t.closest('[data-del]');
   if (del) {
     const list = savedList();
@@ -853,6 +1144,16 @@ view.addEventListener('click', (e) => {
     else { state.cs.keyForm = true; refreshCs(); $('#csKey')?.focus(); }
   }
   if (act === 'cs-redo') runSummary(true);
+  if (act === 'idea-from-kw' && state.kw.result) {
+    const r = state.kw.result;
+    addIdea({ kw: r.kw, cc: r.country, category: r.genreName || '', report: r.report });
+  }
+  if (act === 'idea-new') addIdea({ cc: state.country });
+  if (act === 'idea-copy') {
+    const list = ideas.loadIdeas().sort((a, b) => b.updatedAt - a.updatedAt);
+    if (!list.length) toast('No ideas to copy yet');
+    else copyText(ideas.ideasToText(list, { countryName: (c) => CNAME[c] || c }), 'copyFallback', 'Copied all ideas');
+  }
   if (act === 'cs-key-cancel') { Object.assign(state.cs, { keyForm: false, needsKey: false, error: null }); refreshCs(); }
   if (act === 'cs-key-remove') { cs.setKey(''); refresh('saved'); toast('API key removed'); }
 });
