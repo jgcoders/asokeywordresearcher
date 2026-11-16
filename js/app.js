@@ -1,4 +1,5 @@
 import * as api from './api.js';
+import * as cs from './complaints.js';
 import { keywordReport, nicheReport, nicheScore, titleIdeas, tokens, daysSince, mostCommon, verdictFor } from './scoring.js';
 
 // ---------- constants ----------
@@ -78,6 +79,7 @@ const state = {
   cmp: { text: '', rows: null, busy: false, error: null, token: 0 },
   nicheMode: store.get('nicheMode', 'all') === 'one' ? 'one' : 'all',
   auto: { busy: false, error: null, token: 0, done: 0, failed: 0, current: '', waiting: false, results: null, country: null, at: 0 },
+  cs: { key: null, busy: false, step: '', error: null, needsKey: false, keyForm: false, entry: null, token: 0 },
   apps: new Map(), // id|country → app, for the details sheet
 };
 
@@ -256,6 +258,99 @@ async function runAutoScan() {
   a.at = Date.now();
   if (!a.error && a.results.length) store.set('autoscan:' + cc, { at: a.at, results: a.results });
   refresh('niches');
+}
+
+// ---------- complaint summary ----------
+function costText(usd) {
+  if (!usd || usd < 0.01) return 'under 1¢';
+  if (usd < 1) return `${Math.round(usd * 100)}¢`;
+  return `$${usd.toFixed(2)}`;
+}
+
+function complaintsInner(r) {
+  const s = state.cs;
+  const key = `${r.country}|${r.kw.toLowerCase()}`;
+  if (s.key !== key) {
+    s.token++; // forget any summary still running for another keyword
+    Object.assign(s, { key, busy: false, step: '', error: null, needsKey: false, keyForm: false, entry: cs.getCached(r.kw, r.country) });
+  }
+  const head = '<h3>What users complain about</h3>';
+  if (s.busy) return head + loading(s.step || 'Starting…');
+  if (s.keyForm || s.needsKey) return head + keyFormHtml(s.error);
+  if (s.entry) return head + summaryHtml(s.entry);
+  return `${head}${s.error ? errorBox(s.error) : ''}
+  <div class="empty cs-start">
+    <p>Let Claude read the recent 1–3 star reviews of the top ${cs.APPS_TO_READ} apps and list what users want fixed.</p>
+    <button class="btn" type="button" data-act="cs-run">Summarize complaints</button>
+    <p class="note">Uses your own Anthropic API key and is billed to your Anthropic account, usually a few cents per summary. Results stay on this device for 7 days.</p>
+  </div>`;
+}
+
+function keyFormHtml(err) {
+  return `${err ? errorBox(err) : ''}
+  <form class="form cs-key" id="csKeyForm">
+    <label class="field"><span>Anthropic API key</span>
+      <input type="password" id="csKey" placeholder="sk-ant-…" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" aria-describedby="csKeyHelp">
+    </label>
+    <p class="note" id="csKeyHelp">Create a key in the Anthropic Console (console.anthropic.com → API keys); your account needs some credit. The key is stored only on this device and sent only to Anthropic.</p>
+    <div class="row">
+      <button class="btn" type="submit">Save key and summarize</button>
+      <button class="btn ghost" type="button" data-act="cs-key-cancel">Cancel</button>
+    </div>
+  </form>`;
+}
+
+function summaryHtml(e) {
+  const r = e.result;
+  const model = e.model && e.model !== cs.MODEL ? e.model : cs.MODEL_LABEL;
+  const complaints = (r.complaints || []).map((c) => `<li class="cs-item">
+      <div class="cs-top"><b>${esc(c.theme)}</b><span class="tag warn">${c.mentions} ${c.mentions === 1 ? 'mention' : 'mentions'}</span></div>
+      <p>${esc(c.detail)}</p>
+      ${c.quote ? `<blockquote>“${esc(c.quote)}”</blockquote>` : ''}
+      ${c.apps?.length ? `<p class="note">${esc(c.apps.join(' · '))}</p>` : ''}
+    </li>`).join('');
+  const features = (r.features || []).map((f) => `<li><b>${esc(f.idea)}</b><span>${esc(f.why)}</span></li>`).join('');
+  return `
+  <p class="read">${esc(r.summary)}</p>
+  ${complaints ? `<ol class="cs-list">${complaints}</ol>` : ''}
+  ${features ? `<h3>How a new app could win</h3><ul class="cs-features">${features}</ul>` : ''}
+  <h3>Price and ads</h3>
+  <p class="cs-text">${esc(r.pricing)}</p>
+  <div class="cs-pitch"><span>Pitch</span><p>${esc(r.pitch)}</p></div>
+  <p class="note">Based on ${e.reviewCount} ${e.reviewCount === 1 ? 'review' : 'reviews'} of ${e.appCount} ${e.appCount === 1 ? 'app' : 'apps'} (Apple's feed has reviews for only some apps) · ${esc(model)} · about ${costText(e.cost)} · ${sinceText(e.at)} ·
+    <button class="linklike" type="button" data-act="cs-redo">Summarize again</button></p>`;
+}
+
+function refreshCs() {
+  const box = $('#csBox');
+  if (box && state.kw.result && current() === 'keyword') box.innerHTML = complaintsInner(state.kw.result);
+}
+
+async function runSummary(fresh = false) {
+  const r = state.kw.result;
+  if (!r || r.report.empty) return;
+  const s = state.cs;
+  const token = ++s.token;
+  Object.assign(s, { busy: true, step: '', error: null, needsKey: false, keyForm: false });
+  refreshCs();
+  try {
+    const entry = await cs.summarize({
+      keyword: r.kw,
+      country: r.country,
+      countryName: CNAME[r.country],
+      apps: r.apps,
+      fresh,
+      onStep: (msg) => { if (token === s.token) { s.step = msg; refreshCs(); } },
+    });
+    if (token !== s.token) return;
+    s.entry = entry;
+  } catch (e) {
+    if (token !== s.token) return;
+    s.error = e instanceof cs.SummaryError ? e.message : "Couldn't summarize the reviews. Try again in a minute.";
+    s.needsKey = e instanceof cs.SummaryError && e.needsKey;
+  }
+  s.busy = false;
+  refreshCs();
 }
 
 function sinceText(ts) {
@@ -508,6 +603,7 @@ function keywordOut() {
     ${meter('Ease', rep.ease, easeWhy)}
     ${meter('Money', rep.money, moneyWhy)}
   </div>
+  <section class="section" id="csBox">${complaintsInner(r)}</section>
   <section class="section">
     <h3>Top ${rep.n} for this search</h3>
     <ul class="list">${r.apps.map((a, i) => appRow(a, i + 1, rep.flags[i])).join('')}</ul>
@@ -564,6 +660,19 @@ function compareOut() {
 
 // Saved
 function savedOut() {
+  return savedListHtml() + keySectionHtml();
+}
+
+function keySectionHtml() {
+  const has = !!cs.getKey();
+  return `<section class="section"><h3>Claude API key</h3><div class="empty">
+    ${has
+    ? '<p>Saved on this device. Used only for complaint summaries.</p><button class="btn ghost small" type="button" data-act="cs-key-remove">Remove key</button>'
+    : "<p>No key saved. You'll be asked for one the first time you summarize complaints.</p>"}
+  </div></section>`;
+}
+
+function savedListHtml() {
   const list = savedList();
   if (!list.length) {
     return `<div class="empty"><p>Nothing saved yet.</p><p>Check a keyword and tap <b>Save</b> to keep it here. Saved keywords stay on this device.</p></div>`;
@@ -656,7 +765,7 @@ async function openApp(key) {
           <b>${esc(r.title)}</b><p>${esc(r.text.length > 420 ? r.text.slice(0, 419) + '…' : r.text)}</p>
           <div class="when">${r.date ? esc(new Date(r.date).toLocaleDateString()) : ''}${r.version ? ` · version ${esc(r.version)}` : ''}</div>
         </div>`).join('')
-      : `<p class="note">${all.length ? `No 1–3 star reviews among the ${all.length} most recent. Users seem happy, so this app is harder to beat.` : 'No recent written reviews in this country.'}</p>`;
+      : `<p class="note">${all.length ? `No 1–3 star reviews among the ${all.length} most recent. Users seem happy, so this app is harder to beat.` : "Apple's review feed returned no reviews for this app in this country. This happens for many apps, so it doesn't mean users are happy."}</p>`;
   } catch (e) {
     html = errorBox(errorText(e));
   }
@@ -686,6 +795,12 @@ view.addEventListener('submit', (e) => {
     runKeyword($('#kwInput').value);
   } else if (e.target.id === 'cmpForm') {
     runCompare($('#cmpInput').value);
+  } else if (e.target.id === 'csKeyForm') {
+    const key = $('#csKey').value.trim();
+    if (!key) { $('#csKey').focus(); return; }
+    cs.setKey(key);
+    toast('API key saved on this device');
+    runSummary(true);
   }
 });
 
@@ -732,6 +847,13 @@ view.addEventListener('click', (e) => {
   if (act === 'save' && state.kw.result) { toggleSaved(state.kw.result); refresh('keyword'); }
   if (act === 'compare' && state.kw.result) { state.cmp.text = state.kw.result.kw; go('compare'); runCompare(state.kw.result.kw); }
   if (act === 'csv') copyCsv();
+  if (act === 'cs-run') {
+    if (cs.getKey()) runSummary(false);
+    else { state.cs.keyForm = true; refreshCs(); $('#csKey')?.focus(); }
+  }
+  if (act === 'cs-redo') runSummary(true);
+  if (act === 'cs-key-cancel') { Object.assign(state.cs, { keyForm: false, needsKey: false, error: null }); refreshCs(); }
+  if (act === 'cs-key-remove') { cs.setKey(''); refresh('saved'); toast('API key removed'); }
 });
 
 view.addEventListener('keydown', (e) => {

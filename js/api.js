@@ -84,11 +84,11 @@ async function getJSON(url) {
   }
 }
 
-async function cached(key, loader) {
+async function cached(key, loader, { keepEmpty = true } = {}) {
   const hit = cacheGet(key);
   if (hit) return hit;
   const d = await loader();
-  cacheSet(key, d);
+  if (keepEmpty || (Array.isArray(d) && d.length)) cacheSet(key, d);
   return d;
 }
 
@@ -159,9 +159,14 @@ export async function lookup(ids, country) {
   return out;
 }
 
-/** The 50 most recent written reviews for an app in one storefront. */
+/**
+ * The 50 most recent written reviews for an app in one storefront.
+ * Apple's feed is empty for many apps, and also comes back empty (not as an
+ * error) when Apple is limiting requests, so empty results are not cached.
+ */
 export function reviews(id, country) {
   return cached(`r:${country}:${id}`, async () => {
+    await sleep(700); // this feed throttles sooner than the others
     const d = await getJSON(`${BASE}/${country}/rss/customerreviews/page=1/id=${id}/sortby=mostrecent/json`);
     let entries = d.feed?.entry || [];
     if (!Array.isArray(entries)) entries = [entries];
@@ -174,5 +179,5 @@ export function reviews(id, country) {
         date: e.updated?.label || '',
         version: e['im:version']?.label || '',
       }));
-  });
+  }, { keepEmpty: false });
 }

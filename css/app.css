@@ -381,3 +381,23 @@ tr.best td:first-child { box-shadow: inset 3px 0 0 var(--good); }
 .niche-ex b { color: var(--fg); font-weight: 600; }
 .niche .chip { font-size: 13px; padding: 5px 10px; }
 @media (prefers-reduced-motion: reduce) { .progress i { transition: none; } }
+
+/* ---------- complaint summary ---------- */
+.cs-start { display: flex; flex-direction: column; gap: 12px; align-items: flex-start; }
+.cs-start p { margin: 0; }
+.cs-key { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 14px; }
+.cs-key input { font-family: var(--mono); }
+.cs-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.cs-item { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 14px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.cs-item p { margin: 0; overflow-wrap: anywhere; }
+.cs-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.cs-top b { font: 700 16px/1.3 var(--display); }
+.cs-item blockquote { margin: 2px 0; padding: 2px 0 2px 12px; border-left: 3px solid var(--line); color: var(--muted); font-style: italic; font-size: 14.5px; overflow-wrap: anywhere; }
+.cs-features { list-style: none; margin: 0; padding: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; }
+.cs-features li { padding: 12px 14px; display: flex; flex-direction: column; gap: 2px; }
+.cs-features li + li { border-top: 1px solid var(--line); }
+.cs-features span { color: var(--muted); font-size: 14.5px; }
+.cs-text { margin: 0; }
+.cs-pitch { background: var(--accent-soft); border-radius: 14px; padding: 12px 14px; }
+.cs-pitch span { display: block; font: 600 12px var(--sans); text-transform: uppercase; letter-spacing: 0.06em; color: var(--accent); margin-bottom: 2px; }
+.cs-pitch p { margin: 0; font-weight: 600; }
