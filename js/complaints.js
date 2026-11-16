@@ -6,9 +6,12 @@
 
 import * as api from './api.js';
 
-export const MODEL = 'claude-opus-5-5';
-export const MODEL_LABEL = 'Claude Opus 5.5';
-const PRICE = { input: 4 / 1e6, output: 20 / 1e6 }; // USD per token for Claude Opus 5.5
+export const MODEL = 'claude-haiku-5-5';
+export const MODEL_LABEL = 'Claude Haiku 5.5';
+// Names for models that may appear on summaries saved earlier.
+export const MODEL_LABELS = { 'claude-haiku-5-5': 'Claude Haiku 5.5', 'claude-opus-5-5': 'Claude Opus 5.5' };
+// USD per token for Claude Haiku 5.5. The higher rate applies when the prompt is over 100K tokens.
+const PRICE = { input: 0.1 / 1e6, output: 0.5 / 1e6, longInput: 0.5 / 1e6, longOutput: 2.5 / 1e6, longAbove: 100000 };
 const KEY_STORE = 'aof:anthropicKey';
 const CACHE_PREFIX = 'aof:complaints:';
 const CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days
@@ -163,8 +166,7 @@ export async function summarize({ keyword, country, countryName, apps, fresh = f
     res = await client.beta.messages.parse({
       model: MODEL,
       max_tokens: 16000,
-      betas: ['server-side-fallback-2026-07-01'],
-      fallbacks: 'default', // if a safety classifier declines, retry on Anthropic's recommended model
+      // Claude Haiku 5.5 has no server-side fallback; a decline is handled below.
       output_config: { effort: 'medium', format: betaJSONSchemaOutputFormat(SCHEMA) },
       system: SYSTEM,
       messages: [{ role: 'user', content: buildPrompt(keyword, countryName, groups) }],
@@ -179,9 +181,10 @@ export async function summarize({ keyword, country, countryName, apps, fresh = f
   if (!result) throw new SummaryError("Claude's answer couldn't be read. Tap Summarize again.");
 
   const u = res.usage || {};
-  const cost = (u.input_tokens || 0) * PRICE.input
-    + ((u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0)) * PRICE.input
-    + (u.output_tokens || 0) * PRICE.output;
+  const promptTokens = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0);
+  const long = promptTokens > PRICE.longAbove;
+  const cost = promptTokens * (long ? PRICE.longInput : PRICE.input)
+    + (u.output_tokens || 0) * (long ? PRICE.longOutput : PRICE.output);
   const entry = {
     at: Date.now(),
     result,

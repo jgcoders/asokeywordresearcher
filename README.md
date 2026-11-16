@@ -13,7 +13,7 @@ It runs entirely in the browser. There is no server and no API key: it reads App
 | **Keyword** | Score a search term from its top 10 App Store results: **Demand**, **Ease** and **Money**, combined into an **Opportunity** score (0–100). |
 | **Countries** | Score one keyword in the US, UK, Canada, Australia, Germany and Japan side by side. |
 | **Saved** | Keywords you saved on this device, with "Copy as CSV". |
-| **Keyword → What users complain about** | Optional. Claude (Opus 5.5) reads the recent 1–3 star reviews of the top 10 apps and returns the main complaint themes with counts and quotes, features a new app could win with, what users say about price and ads, and a one-line pitch. Uses your own Anthropic API key, billed to your Anthropic account (usually a few cents). Results are kept on the device for 7 days. |
+| **Keyword → What users complain about** | Optional. Claude (Haiku 5.5) reads the recent 1–3 star reviews of the top 10 apps and returns the main complaint themes with counts and quotes, features a new app could win with, what users say about price and ads, and a one-line pitch. Uses your own Anthropic API key, billed to your Anthropic account (usually well under 1¢). Results are kept on the device for 7 days. |
 | **App details** | Tap any app to see its stats and its recent 1–3 star reviews, which show what users want fixed. |
 
 ## How the scores work
@@ -46,7 +46,7 @@ Apple rate-limits these (roughly 20 requests a minute), so requests are spaced o
 
 - The key is entered in the app, stored in this browser's `localStorage` on your device, and sent only to `api.anthropic.com`. It is never in the repository or on the website. Remove it any time from the **Saved** tab.
 - Requests go straight from your phone to Anthropic using the official SDK (`@anthropic-ai/sdk` 1.8.0, bundled into `js/vendor/` so no CDN is involved). Browser use is enabled with `dangerouslyAllowBrowser`, which is acceptable here because each person uses their own key on their own device. Don't put a shared key into this app.
-- Requests use `fallbacks: "default"`: if a safety classifier declines, the API retries on Anthropic's recommended fallback model.
+- The model is `claude-haiku-5-5` (set in `js/complaints.js`). It has no server-side fallback, so if a safety classifier declines a request the app shows a message instead.
 - Apple's public review feed returns nothing for many apps, and also returns empty results when it's rate limiting. The app reads all top 10 apps, says how many contributed, and never calls Claude when there are too few reviews.
 
 To rebuild the SDK bundle:

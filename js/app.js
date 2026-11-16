@@ -262,9 +262,10 @@ async function runAutoScan() {
 
 // ---------- complaint summary ----------
 function costText(usd) {
-  if (!usd || usd < 0.01) return 'under 1¢';
-  if (usd < 1) return `${Math.round(usd * 100)}¢`;
-  return `$${usd.toFixed(2)}`;
+  if (!usd || usd < 0.001) return 'under 0.1¢';
+  if (usd < 0.01) return `about ${(usd * 100).toFixed(1)}¢`;
+  if (usd < 1) return `about ${Math.round(usd * 100)}¢`;
+  return `about $${usd.toFixed(2)}`;
 }
 
 function complaintsInner(r) {
@@ -282,7 +283,7 @@ function complaintsInner(r) {
   <div class="empty cs-start">
     <p>Let Claude read the recent 1–3 star reviews of the top ${cs.APPS_TO_READ} apps and list what users want fixed.</p>
     <button class="btn" type="button" data-act="cs-run">Summarize complaints</button>
-    <p class="note">Uses your own Anthropic API key and is billed to your Anthropic account, usually a few cents per summary. Results stay on this device for 7 days.</p>
+    <p class="note">Uses your own Anthropic API key and is billed to your Anthropic account, usually well under 1¢ per summary with Claude Haiku 5.5. Results stay on this device for 7 days.</p>
   </div>`;
 }
 
@@ -302,7 +303,7 @@ function keyFormHtml(err) {
 
 function summaryHtml(e) {
   const r = e.result;
-  const model = e.model && e.model !== cs.MODEL ? e.model : cs.MODEL_LABEL;
+  const model = cs.MODEL_LABELS[e.model] || e.model || cs.MODEL_LABEL;
   const complaints = (r.complaints || []).map((c) => `<li class="cs-item">
       <div class="cs-top"><b>${esc(c.theme)}</b><span class="tag warn">${c.mentions} ${c.mentions === 1 ? 'mention' : 'mentions'}</span></div>
       <p>${esc(c.detail)}</p>
@@ -317,7 +318,7 @@ function summaryHtml(e) {
   <h3>Price and ads</h3>
   <p class="cs-text">${esc(r.pricing)}</p>
   <div class="cs-pitch"><span>Pitch</span><p>${esc(r.pitch)}</p></div>
-  <p class="note">Based on ${e.reviewCount} ${e.reviewCount === 1 ? 'review' : 'reviews'} of ${e.appCount} ${e.appCount === 1 ? 'app' : 'apps'} (Apple's feed has reviews for only some apps) · ${esc(model)} · about ${costText(e.cost)} · ${sinceText(e.at)} ·
+  <p class="note">Based on ${e.reviewCount} ${e.reviewCount === 1 ? 'review' : 'reviews'} of ${e.appCount} ${e.appCount === 1 ? 'app' : 'apps'} (Apple's feed has reviews for only some apps) · ${esc(model)} · ${costText(e.cost)} ·${sinceText(e.at)} ·
     <button class="linklike" type="button" data-act="cs-redo">Summarize again</button></p>`;
 }
 
