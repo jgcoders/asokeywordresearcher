@@ -1,7 +1,7 @@
 import * as api from './api.js';
 import * as cs from './complaints.js';
 import * as ideas from './ideas.js';
-import * as nightly from './nightly.js';
+import * as scanData from './scan-data.js';
 import { COUNTRIES, CNAME, CSHORT, REGIONS, GENRES, GNAME } from './constants.js';
 import { keywordReport, nicheReport, nicheScore, categoryScore, categoryVerdict, appGap, gapVerdict, ratingBaseline, pickIdeas, titleIdeas, tokens, daysSince, mostCommon, verdictFor } from './scoring.js';
 
@@ -77,7 +77,7 @@ const state = {
   kw: { text: '', result: null, busy: false, error: null, token: 0 },
   cmp: { text: '', rows: null, busy: false, error: null, token: 0 },
   nicheMode: ['top', 'all', 'one'].includes(store.get('nicheMode', 'top')) ? store.get('nicheMode', 'top') : 'top',
-  nightly: { summary: null, loading: false, error: null, countries: {}, countryLoading: {} },
+  scan: { summary: null, loading: false, error: null, countries: {}, countryLoading: {} },
   top: { kind: 'gaps', cc: store.get('topCc', ''), g: store.get('topG', '') },
   auto: { busy: false, error: null, token: 0, done: 0, failed: 0, current: '', waiting: false, results: null, country: null, at: 0 },
   ideasFilter: 'all',
@@ -214,8 +214,8 @@ function summarizeNiche(r, name) {
   };
 }
 
-/** A category row from the nightly scan, in the same shape as a live scan result. */
-function fromNightlyCategory(c) {
+/** A category row from the App Store scan, in the same shape as a live scan result. */
+function fromScanCategory(c) {
   return {
     genreId: String(c.g), name: GNAME[c.g] || String(c.g), score: c.s, verdict: categoryVerdict(c.s), sizeLabel: c.sz,
     niche: c.n, gapTop: c.gt, small: c.sm, fresh: c.fr, stale: c.st, median: c.md,
@@ -224,22 +224,22 @@ function fromNightlyCategory(c) {
   };
 }
 
-function ensureNightly() {
-  const n = state.nightly;
+function ensureScan() {
+  const n = state.scan;
   if (n.summary || n.loading) return;
   n.loading = true;
   n.error = null;
-  nightly.loadSummary()
+  scanData.loadSummary()
     .then((sum) => { n.summary = sum; })
-    .catch((e) => { n.error = e instanceof nightly.NotPublishedError ? 'missing' : 'failed'; })
+    .catch((e) => { n.error = e instanceof scanData.NotPublishedError ? 'missing' : 'failed'; })
     .finally(() => { n.loading = false; refresh('niches'); });
 }
 
-function ensureNightlyCountry(cc) {
-  const n = state.nightly;
+function ensureScanCountry(cc) {
+  const n = state.scan;
   if (n.countries[cc] || n.countryLoading[cc]) return;
   n.countryLoading[cc] = true;
-  nightly.loadCountry(cc)
+  scanData.loadCountry(cc)
     .then((data) => { n.countries[cc] = data; })
     .catch(() => { n.countries[cc] = { failed: true, categories: [] }; })
     .finally(() => { n.countryLoading[cc] = false; refresh('niches'); });
@@ -488,15 +488,15 @@ const modeSwitch = () => `
     <button type="button" data-mode="one" aria-pressed="${state.nicheMode === 'one'}">One category</button>
   </div>`;
 
-// ---------- Top apps (nightly Gap scores) ----------
+// ---------- Top apps (Gap scores from the App Store scan) ----------
 const TOP_KINDS = [['gaps', 'Biggest gaps'], ['risers', 'Rising'], ['newcomers', 'New earners']];
 
 function topShell() {
-  ensureNightly();
+  ensureScan();
   const t = state.top;
-  if (t.cc) ensureNightlyCountry(t.cc);
+  if (t.cc) ensureScanCountry(t.cc);
   return `${modeSwitch()}
-  <p class="intro">Every night we score every Top Grossing app in ${COUNTRIES.length} countries and ${GENRES.length} categories. High Gap scores are apps people pay for but are unhappy with.</p>
+  <p class="intro">Each App Store scan scores every Top Grossing app in ${COUNTRIES.length} countries and ${GENRES.length} categories. High Gap scores are apps people pay for but are unhappy with.</p>
   <div class="row">
     <label class="field"><span>Country</span><select class="input" id="topCc">
       <option value="">All countries</option>
@@ -513,11 +513,11 @@ function topShell() {
 
 function topEntries() {
   const t = state.top;
-  const sum = state.nightly.summary;
+  const sum = state.scan.summary;
   const byGenre = (list) => (t.g ? list.filter((e) => String(e.g) === String(t.g)) : list);
   if (t.kind === 'gaps') {
     if (t.cc) {
-      const data = state.nightly.countries[t.cc];
+      const data = state.scan.countries[t.cc];
       if (!data) return null;
       return byGenre(data.categories.flatMap((c) => c.apps)).sort((a, b) => b.gap - a.gap).slice(0, 100);
     }
@@ -528,7 +528,7 @@ function topEntries() {
 }
 
 function topRow(e, i) {
-  const a = nightly.toApp(e);
+  const a = scanData.toApp(e);
   remember([a]);
   const tags = [];
   if (e.pr > 0 && e.pr > e.rk) tags.push(['good', `Up ${e.pr - e.rk} places (was #${e.pr})`]);
@@ -552,16 +552,16 @@ function topRow(e, i) {
 }
 
 function topOut() {
-  const n = state.nightly;
+  const n = state.scan;
   const t = state.top;
-  if (n.loading && !n.summary) return loading("Loading last night's scan…");
+  if (n.loading && !n.summary) return loading('Loading the latest scan…');
   if (!n.summary) {
     if (n.error === 'missing') {
-      return `<div class="empty"><p>The nightly scan hasn't published results yet.</p>
-        <p>It runs every night at about 02:30 UTC. Until then, use <b>Categories</b> or <b>One category</b> to scan live.</p></div>`;
+      return `<div class="empty"><p>No App Store scan has been published yet.</p>
+        <p>Start one from GitHub (Actions → App Store scan → Run workflow). Until then, use <b>Categories</b> or <b>One category</b> to scan live.</p></div>`;
     }
-    return `${errorBox("Couldn't load last night's scan. Check your connection and try again.")}
-      <button class="btn ghost small" type="button" data-act="nightly-retry">Try again</button>`;
+    return `${errorBox("Couldn't load the latest scan. Check your connection and try again.")}
+      <button class="btn ghost small" type="button" data-act="scan-retry">Try again</button>`;
   }
   const sum = n.summary;
   const meta = `<p class="note">Updated ${sinceText(Date.parse(sum.generatedAt))} · ${sum.scanned} charts${sum.trendSince ? ` · trends since ${esc(sum.trendSince)}` : ''}</p>`;
@@ -581,7 +581,7 @@ function topOut() {
 
 function autoShell() {
   loadAuto();
-  ensureNightly();
+  ensureScan();
   return `${modeSwitch()}
   <p class="intro">All ${GENRES.length} categories in ${esc(CNAME[state.country])}, ranked by room for small apps, market size and the biggest Gap scores. Change the country at the top.</p>
   <button class="btn ghost" id="autoBtn" type="button" data-act="autoscan">Scan live now</button>
@@ -619,20 +619,20 @@ function autoOut() {
     parts.push(`<div class="progress-card"><div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><i style="width:${pct}%"></i></div><p class="note">${esc(msg)}</p></div>`);
   }
   if (a.error) parts.push(errorBox(`${a.error} Categories scanned so far are below.`));
-  // Show whichever is newer: a live scan on this phone or last night's scan.
-  const sum = state.nightly.summary;
-  const nightlyAt = sum ? Date.parse(sum.generatedAt) : 0;
-  const nightlyRows = sum ? sum.categories.filter((c) => c.cc === state.country).map(fromNightlyCategory).sort((x, y) => y.score - x.score) : [];
+  // Show whichever is newer: a live scan on this phone or the latest App Store scan.
+  const sum = state.scan.summary;
+  const scanAt = sum ? Date.parse(sum.generatedAt) : 0;
+  const scanRows = sum ? sum.categories.filter((c) => c.cc === state.country).map(fromScanCategory).sort((x, y) => y.score - x.score) : [];
   const live = a.country === state.country && a.results?.length ? a.results : null;
   let res = null;
   let source = '';
-  if (live && (a.busy || a.at >= nightlyAt || !nightlyRows.length)) { res = live; source = a.busy ? '' : `Scanned live ${sinceText(a.at)}.`; }
-  else if (nightlyRows.length && !a.busy) { res = nightlyRows; source = `From last night's scan, updated ${sinceText(nightlyAt)}.`; }
+  if (live && (a.busy || a.at >= scanAt || !scanRows.length)) { res = live; source = a.busy ? '' : `Scanned live ${sinceText(a.at)}.`; }
+  else if (scanRows.length && !a.busy) { res = scanRows; source = `From the App Store scan of ${new Date(scanAt).toLocaleDateString()} (${sinceText(scanAt)}).`; }
   if (!res || !res.length) {
     if (!a.busy) {
-      if (state.nightly.loading) parts.push(loading("Loading last night's scan…"));
+      if (state.scan.loading) parts.push(loading('Loading the latest scan…'));
       else {
-        parts.push(`<div class="empty"><p>${sum ? `Last night's scan has no data for ${esc(CNAME[state.country])}.` : "Last night's scan isn't available yet."} Tap <b>Scan live now</b> to rank every category in ${esc(CNAME[state.country])}.</p>
+        parts.push(`<div class="empty"><p>${sum ? `The latest scan has no data for ${esc(CNAME[state.country])}.` : "No App Store scan is available yet."} Tap <b>Scan live now</b> to rank every category in ${esc(CNAME[state.country])}.</p>
           <p>A live scan takes 1–2 minutes. Scanning again within 6 hours is almost instant.</p></div>`);
       }
     }
@@ -1340,7 +1340,7 @@ view.addEventListener('click', (e) => {
   const act = t.closest('[data-act]')?.dataset.act;
   const topKind = t.closest('[data-top-kind]')?.dataset.topKind;
   if (topKind) { state.top.kind = topKind; render(); return; }
-  if (act === 'nightly-retry') { ensureNightly(); refresh('niches'); return; }
+  if (act === 'scan-retry') { ensureScan(); refresh('niches'); return; }
   const mode = t.closest('[data-mode]')?.dataset.mode;
   if (mode && mode !== state.nicheMode) { state.nicheMode = mode; store.set('nicheMode', mode); render(); return; }
   const genre = t.closest('[data-open-genre]')?.dataset.openGenre;
@@ -1383,7 +1383,7 @@ view.addEventListener('change', (e) => {
   if (e.target.id === 'topCc') {
     state.top.cc = e.target.value;
     store.set('topCc', state.top.cc);
-    if (state.top.cc) ensureNightlyCountry(state.top.cc);
+    if (state.top.cc) ensureScanCountry(state.top.cc);
     refresh('niches');
   } else if (e.target.id === 'topG') {
     state.top.g = e.target.value;

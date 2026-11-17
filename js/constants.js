@@ -1,4 +1,4 @@
-// Countries and categories, shared by the app and the nightly scan (scripts/nightly-scan.mjs).
+// Countries and categories, shared by the app and the App Store scan (scripts/scan.mjs).
 
 // [App Store country code, name, short label, region]
 export const COUNTRIES = [

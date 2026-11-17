@@ -8,8 +8,8 @@ It runs entirely in the browser. There is no server and no API key: it reads App
 
 | Tab | What you get |
 |---|---|
-| **Niches → Top apps** | From the nightly scan: the apps with the highest **Gap score** across 33 countries and 24 categories (people pay for them but are unhappy), filterable by country and category. **Rising** lists apps that climbed 10+ places in Top Grossing this week; **New earners** lists small apps (under 5k ratings) that entered the top 60. Tap an app for its Gap breakdown and complaints, or add it to Ideas as a competitor. |
-| **Niches → Categories** | All 24 categories in the selected country ranked by **Category score**, straight from the nightly scan. "Scan live now" runs the same scan on the phone (1–2 minutes). |
+| **Niches → Top apps** | From the latest App Store scan: the apps with the highest **Gap score** across 33 countries and 24 categories (people pay for them but are unhappy), filterable by country and category. **Rising** lists apps that climbed 10+ places in Top Grossing since an earlier scan (the one closest to a week before); **New earners** lists small apps (under 5k ratings) that entered the top 60. Tap an app for its Gap breakdown and complaints, or add it to Ideas as a competitor. |
+| **Niches → Categories** | All 24 categories in the selected country ranked by **Category score**, straight from the latest App Store scan. "Scan live now" runs the same scan on the phone (1–2 minutes). |
 | **Niches → One category** | Scan a category's Top Grossing, Top Paid or Top Free chart in one country. Shows how many of the top 100 are small earners (under 5k ratings), new (released in the last 18 months) or neglected (no update in a year), plus keyword ideas taken from the names of small and new apps. |
 | **Keyword** | Score a search term from its top 10 App Store results: **Demand**, **Ease** and **Money**, combined into an **Opportunity** score (0–100). |
 | **Countries** | Score one keyword in up to 12 countries side by side. Pick countries yourself or use a preset (Top payers, English, Europe, Asia, Rich & small); the choice is remembered. |
@@ -52,24 +52,24 @@ All are public Apple endpoints that allow browser requests:
 
 Apple rate-limits these (roughly 20 requests a minute), so requests are spaced out and responses are cached on the device for 6 hours.
 
-## Nightly scan
+## App Store scan
 
-`.github/workflows/nightly-scan.yml` runs `scripts/nightly-scan.mjs` every day at 02:23 UTC (and on demand from the Actions tab). It reads Top Grossing for all 33 countries × 24 categories (about 1,600 requests, paced for Apple's limits, roughly 30–40 minutes), scores every app and category with the same code the app uses, and force-pushes the results to the **`data` branch**:
+`.github/workflows/app-store-scan.yml` runs `scripts/scan.mjs` **only when started by hand**; there is no schedule. Start it from GitHub: **Actions → App Store scan → Run workflow**. It reads Top Grossing for all 33 countries × 24 categories (about 1,600 requests, paced for Apple's limits, roughly 40 minutes), scores every app and category with the same code the app uses, and force-pushes the results to the **`data` branch**:
 
 - `summary.json`: every category score, the 150 highest Gap scores, risers and new earners
 - `country/<cc>.json`: the 10 highest Gap-score apps in every category of one country
-- `ranks/<date>.json`: chart order, kept for 8 days to find trends
+- `ranks/<date>.json`: chart order, kept for 30 days; trends compare with the earlier scan closest to a week before
 
-The `data` branch is replaced on every run, so the repository doesn't grow. The app reads it from `raw.githubusercontent.com`.
+The `data` branch is replaced on every run, so the repository doesn't grow. The app reads it from `raw.githubusercontent.com`. GitHub only offers **Run workflow** for workflows on the default branch.
 
-GitHub only runs scheduled workflows that are on the repository's **default branch**, so this file has to be on the default branch for the nightly run to happen. To run a scan by hand: Actions → Nightly App Store scan → Run workflow. To test locally:
+To test locally:
 
 ```sh
-node scripts/nightly-scan.mjs --out /tmp/scan --countries us,de --genres 6013,6015
+node scripts/scan.mjs --out /tmp/scan --countries us,de --genres 6013,6015
 
 # keep Apple's raw responses, then re-score later without rescanning:
-node scripts/nightly-scan.mjs --out /tmp/scan --cache /tmp/apple-cache
-node scripts/nightly-scan.mjs --out /tmp/scan --cache /tmp/apple-cache --gap 0
+node scripts/scan.mjs --out /tmp/scan --cache /tmp/apple-cache
+node scripts/scan.mjs --out /tmp/scan --cache /tmp/apple-cache --gap 0
 ```
 
 ## Complaint summaries and your API key

@@ -472,7 +472,7 @@ textarea, .copy-box {
 .cmp-pick .chip { font-size: 13.5px; padding: 6px 11px; }
 .chip:disabled { opacity: 0.4; cursor: not-allowed; }
 
-/* ---------- top apps (nightly Gap scores) ---------- */
+/* ---------- top apps (Gap scores from the App Store scan) ---------- */
 .seg3 { grid-template-columns: repeat(3, 1fr); }
 .seg3 button { padding-inline: 4px; }
 .top-app { grid-template-columns: 28px 48px minmax(0, 1fr) auto; align-items: center; }

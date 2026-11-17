@@ -1,10 +1,10 @@
 #!/usr/bin/env node
-// Nightly scan: reads Top Grossing in every country × category, scores every
+// App Store scan: reads Top Grossing in every country × category, scores every
 // app (Gap score) and every category, finds trends against earlier days, and
 // writes JSON files that the app loads.
 //
 // Usage:
-//   node scripts/nightly-scan.mjs --out <dir> [--prev <dir>] [--countries us,de] [--genres 6013,6015]
+//   node scripts/scan.mjs --out <dir> [--prev <dir>] [--countries us,de] [--genres 6013,6015]
 //                                 [--cache <dir>] [--gap <ms>]
 //
 // --prev   the previous output (the `data` branch); its ranks/ folder is used
@@ -21,7 +21,7 @@ import { COUNTRIES, GENRES, GNAME } from '../js/constants.js';
 import { nicheReport, appGap, ratingBaseline, categoryScore, pickIdeas, isPlatformOwner } from '../js/scoring.js';
 
 const DAY = 86400000;
-const KEEP_RANK_DAYS = 8; // trend window: compare with ~7 days ago
+const KEEP_RANK_DAYS = 30; // scans run on demand: keep earlier chart positions this long for trends
 const MAX_FAILURE_SHARE = 0.25; // publish nothing if more than this many categories fail
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -30,7 +30,7 @@ const args = Object.fromEntries(
   process.argv.slice(2).reduce((acc, a, i, all) => (a.startsWith('--') ? [...acc, [a.slice(2), all[i + 1]]] : acc), []),
 );
 if (!args.out) {
-  console.error('Usage: node scripts/nightly-scan.mjs --out <dir> [--prev <dir>] [--countries us,de] [--genres 6013,6015]');
+  console.error('Usage: node scripts/scan.mjs --out <dir> [--prev <dir>] [--countries us,de] [--genres 6013,6015]');
   process.exit(2);
 }
 if (args.gap !== undefined) api.setRequestGap(args.gap);
@@ -66,8 +66,8 @@ function loadPrevRanks(prevDir) {
     .map((f) => ({ f, date: f.slice(0, 10), age: Math.round((now - Date.parse(f.slice(0, 10))) / DAY) }))
     .filter((x) => x.age >= 1 && x.age <= KEEP_RANK_DAYS)
     .sort((a, b) => a.date.localeCompare(b.date));
-  // Compare with the snapshot closest to 7 days ago (the oldest one we kept).
-  const baseFile = files.find((x) => x.age <= 7) || files[files.length - 1];
+  // Compare with the earlier scan closest to a week ago.
+  const baseFile = [...files].sort((a, b) => Math.abs(a.age - 7) - Math.abs(b.age - 7) || a.age - b.age)[0];
   const base = baseFile ? { date: baseFile.date, map: JSON.parse(fs.readFileSync(path.join(dir, baseFile.f), 'utf8')) } : null;
   return { files: files.map((x) => path.join(dir, x.f)), base };
 }
@@ -240,9 +240,9 @@ for (const f of prev.files) {
   const name = path.basename(f);
   if (name !== `${today}.json`) fs.copyFileSync(f, path.join(out, 'ranks', name));
 }
-fs.writeFileSync(path.join(out, 'README.md'), `# Nightly App Store scan data
+fs.writeFileSync(path.join(out, 'README.md'), `# App Store scan data
 
-Written by \`scripts/nightly-scan.mjs\` (workflow: \`.github/workflows/nightly-scan.yml\`).
+Written by \`scripts/scan.mjs\` (workflow: \`.github/workflows/app-store-scan.yml\`, run by hand).
 This branch is replaced on every run. Last run: ${summary.generatedAt}.
 
 - \`summary.json\`: category scores for every country, top Gap-score apps, risers and new earners

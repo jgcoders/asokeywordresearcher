@@ -1,5 +1,5 @@
-// Loads the results of the nightly scan (scripts/nightly-scan.mjs), which the
-// GitHub workflow publishes to this repository's `data` branch.
+// Loads the results of the App Store scan (scripts/scan.mjs), which the GitHub
+// workflow (run by hand) publishes to this repository's `data` branch.
 
 import { GNAME } from './constants.js';
 
@@ -20,8 +20,8 @@ export class NotPublishedError extends Error {}
 async function getJson(file) {
   const hour = Math.floor(Date.now() / 3.6e6); // fetch fresh data at most once an hour
   const res = await fetch(`${DATA_BASE}${file}?h=${hour}`);
-  if (res.status === 404) throw new NotPublishedError('The nightly scan has not published results yet.');
-  if (!res.ok) throw new Error(`Nightly data returned ${res.status}`);
+  if (res.status === 404) throw new NotPublishedError('No App Store scan has been published yet.');
+  if (!res.ok) throw new Error(`Scan data returned ${res.status}`);
   return res.json();
 }
 

@@ -8,7 +8,7 @@ const CACHE_PREFIX = 'aof-cache:';
 const CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours
 let GAP_MS = 800; // minimum time between two requests to Apple
 
-/** For the nightly scan: change the spacing (e.g. 0 when replaying cached responses). */
+/** For the App Store scan: change the spacing (e.g. 0 when replaying cached responses). */
 export function setRequestGap(ms) {
   GAP_MS = Math.max(0, Number(ms) || 0);
 }
