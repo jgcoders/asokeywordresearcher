@@ -100,6 +100,8 @@ function normApp(r) {
     seller: r.sellerName || r.artistName || '',
     ratings: r.userRatingCount || 0,
     rating: r.averageUserRating || 0,
+    currentRating: r.averageUserRatingForCurrentVersion || 0,
+    currentRatings: r.userRatingCountForCurrentVersion || 0,
     price: r.price || 0,
     priceText: r.formattedPrice || '',
     released: r.releaseDate || '',

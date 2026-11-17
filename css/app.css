@@ -471,3 +471,12 @@ textarea, .copy-box {
 .cmp-region > span { font: 600 12px var(--sans); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
 .cmp-pick .chip { font-size: 13.5px; padding: 6px 11px; }
 .chip:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ---------- top apps (nightly Gap scores) ---------- */
+.seg3 { grid-template-columns: repeat(3, 1fr); }
+.seg3 button { padding-inline: 4px; }
+.top-app { grid-template-columns: 28px 48px minmax(0, 1fr) auto; align-items: center; }
+.top-app .rank { line-height: 1.2; }
+.top-app .score-pill { align-self: center; }
+.gap-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.gap-facts b { font: 700 20px/1.1 var(--display); font-variant-numeric: tabular-nums; }

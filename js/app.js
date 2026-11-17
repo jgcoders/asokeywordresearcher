@@ -1,48 +1,11 @@
 import * as api from './api.js';
 import * as cs from './complaints.js';
 import * as ideas from './ideas.js';
-import { keywordReport, nicheReport, nicheScore, titleIdeas, tokens, daysSince, mostCommon, verdictFor } from './scoring.js';
+import * as nightly from './nightly.js';
+import { COUNTRIES, CNAME, CSHORT, REGIONS, GENRES, GNAME } from './constants.js';
+import { keywordReport, nicheReport, nicheScore, categoryScore, categoryVerdict, appGap, gapVerdict, ratingBaseline, pickIdeas, titleIdeas, tokens, daysSince, mostCommon, verdictFor } from './scoring.js';
 
 // ---------- constants ----------
-// [App Store country code, name, short label, region]
-const COUNTRIES = [
-  ['us', 'United States', 'US', 'English-speaking'],
-  ['gb', 'United Kingdom', 'UK', 'English-speaking'],
-  ['ca', 'Canada', 'Canada', 'English-speaking'],
-  ['au', 'Australia', 'Australia', 'English-speaking'],
-  ['nz', 'New Zealand', 'New Zealand', 'English-speaking'],
-  ['ie', 'Ireland', 'Ireland', 'English-speaking'],
-  ['sg', 'Singapore', 'Singapore', 'English-speaking'],
-  ['de', 'Germany', 'Germany', 'Europe'],
-  ['fr', 'France', 'France', 'Europe'],
-  ['it', 'Italy', 'Italy', 'Europe'],
-  ['es', 'Spain', 'Spain', 'Europe'],
-  ['nl', 'Netherlands', 'Netherlands', 'Europe'],
-  ['be', 'Belgium', 'Belgium', 'Europe'],
-  ['at', 'Austria', 'Austria', 'Europe'],
-  ['ch', 'Switzerland', 'Switzerland', 'Europe'],
-  ['se', 'Sweden', 'Sweden', 'Europe'],
-  ['no', 'Norway', 'Norway', 'Europe'],
-  ['dk', 'Denmark', 'Denmark', 'Europe'],
-  ['fi', 'Finland', 'Finland', 'Europe'],
-  ['pl', 'Poland', 'Poland', 'Europe'],
-  ['pt', 'Portugal', 'Portugal', 'Europe'],
-  ['jp', 'Japan', 'Japan', 'Asia'],
-  ['kr', 'South Korea', 'Korea', 'Asia'],
-  ['tw', 'Taiwan', 'Taiwan', 'Asia'],
-  ['hk', 'Hong Kong', 'Hong Kong', 'Asia'],
-  ['cn', 'China', 'China', 'Asia'],
-  ['in', 'India', 'India', 'Asia'],
-  ['ae', 'United Arab Emirates', 'UAE', 'Middle East'],
-  ['sa', 'Saudi Arabia', 'Saudi Arabia', 'Middle East'],
-  ['il', 'Israel', 'Israel', 'Middle East'],
-  ['tr', 'Turkey', 'Turkey', 'Middle East'],
-  ['br', 'Brazil', 'Brazil', 'Latin America'],
-  ['mx', 'Mexico', 'Mexico', 'Latin America'],
-];
-const CNAME = Object.fromEntries(COUNTRIES.map(([c, n]) => [c, n]));
-const CSHORT = Object.fromEntries(COUNTRIES.map(([c, , sh]) => [c, sh]));
-const REGIONS = [...new Set(COUNTRIES.map((c) => c[3]))];
 
 // Countries tab: which countries to compare. Apple limits request speed, so cap the set.
 const COMPARE_MAX = 12;
@@ -55,14 +18,6 @@ const COMPARE_PRESETS = [
 ];
 const DEFAULT_COMPARE = COMPARE_PRESETS[0][1];
 
-const GENRES = [
-  [6018, 'Books'], [6000, 'Business'], [6026, 'Developer Tools'], [6017, 'Education'], [6016, 'Entertainment'],
-  [6015, 'Finance'], [6023, 'Food & Drink'], [6014, 'Games'], [6027, 'Graphics & Design'], [6013, 'Health & Fitness'],
-  [6012, 'Lifestyle'], [6020, 'Medical'], [6011, 'Music'], [6010, 'Navigation'], [6009, 'News'],
-  [6008, 'Photo & Video'], [6007, 'Productivity'], [6006, 'Reference'], [6024, 'Shopping'], [6005, 'Social Networking'],
-  [6004, 'Sports'], [6003, 'Travel'], [6002, 'Utilities'], [6001, 'Weather'],
-];
-const GNAME = Object.fromEntries(GENRES.map(([id, n]) => [String(id), n]));
 const CHART_LABEL = { grossing: 'Top Grossing', paid: 'Top Paid', free: 'Top Free' };
 const SAMPLES = ['plant care', 'budget planner', 'sleep sounds', 'bird identifier', 'meal planner', 'pdf scanner'];
 
@@ -121,7 +76,9 @@ const state = {
   niche: { genreId: store.get('nicheGenre', '6013'), chart: store.get('nicheChart', 'grossing'), only: false, result: null, busy: false, error: null, token: 0 },
   kw: { text: '', result: null, busy: false, error: null, token: 0 },
   cmp: { text: '', rows: null, busy: false, error: null, token: 0 },
-  nicheMode: store.get('nicheMode', 'all') === 'one' ? 'one' : 'all',
+  nicheMode: ['top', 'all', 'one'].includes(store.get('nicheMode', 'top')) ? store.get('nicheMode', 'top') : 'top',
+  nightly: { summary: null, loading: false, error: null, countries: {}, countryLoading: {} },
+  top: { kind: 'gaps', cc: store.get('topCc', ''), g: store.get('topG', '') },
   auto: { busy: false, error: null, token: 0, done: 0, failed: 0, current: '', waiting: false, results: null, country: null, at: 0 },
   ideasFilter: 'all',
   cs: { key: null, busy: false, step: '', error: null, needsKey: false, keyForm: false, entry: null, token: 0 },
@@ -157,6 +114,13 @@ async function scanNiche(genreId, cc, type) {
   const chart = await api.chart(cc, genreId, type);
   const details = await api.lookup(chart.map((c) => c.id), cc);
   const apps = chart.map((c, i) => ({ ...c, ...(details.get(c.id) || {}), rank: i + 1, cc }));
+  if (type === 'grossing') {
+    const baseline = ratingBaseline(apps);
+    apps.forEach((a) => {
+      const g = appGap(a, { rank: a.rank, baseline });
+      a.gapInfo = { gap: g.gap, money: g.money, demand: g.demand, unhappy: g.unhappy, beatable: g.beatable, rank: a.rank };
+    });
+  }
   return { genreId, country: cc, chart: type, apps, report: nicheReport(apps, { isGrossing: type === 'grossing' }) };
 }
 
@@ -234,34 +198,59 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function summarizeNiche(r, name) {
   const rep = r.report;
-  const ns = nicheScore(rep);
+  const gaps = r.apps.map((a) => a.gapInfo?.gap || 0);
+  const cat = categoryScore(rep, gaps);
   const examples = r.apps
     .filter((a, i) => rep.flags[i].smallEarner && a.ratings > 0)
     .slice(0, 2)
     .map((a) => ({ name: a.name, rank: a.rank, ratings: a.ratings }));
+  const best = [...r.apps].sort((x, y) => (y.gapInfo?.gap || 0) - (x.gapInfo?.gap || 0))[0];
   return {
-    genreId: String(r.genreId), name, score: ns.score, verdict: ns.verdict, sizeLabel: ns.sizeLabel,
+    genreId: String(r.genreId), name, score: cat.score, verdict: cat.verdict, sizeLabel: cat.sizeLabel,
+    niche: cat.niche, gapTop: cat.gapTop,
     small: rep.small, fresh: rep.fresh, stale: rep.stale, median: rep.medianRatings,
     ideas: pickIdeas(rep.ideas.map((i) => i.text), name), examples,
+    topGap: best ? { name: best.name, gap: best.gapInfo?.gap || 0 } : null,
   };
 }
 
-/** Phrases first, no words from the category's own name, no single words already inside a phrase. */
-function pickIdeas(ideas, categoryName, limit = 5) {
-  const cat = new Set(tokens(categoryName));
-  const isCat = (w) => cat.has(w) || cat.has(w + 's') || cat.has(w.replace(/s$/, ''));
-  const useful = ideas.filter((t) => !t.split(' ').every(isCat));
-  const phrases = useful.filter((t) => t.includes(' '));
-  const inPhrase = new Set(phrases.flatMap((t) => t.split(' ')));
-  const words = useful.filter((t) => !t.includes(' ') && !inPhrase.has(t));
-  return [...phrases, ...words].slice(0, limit);
+/** A category row from the nightly scan, in the same shape as a live scan result. */
+function fromNightlyCategory(c) {
+  return {
+    genreId: String(c.g), name: GNAME[c.g] || String(c.g), score: c.s, verdict: categoryVerdict(c.s), sizeLabel: c.sz,
+    niche: c.n, gapTop: c.gt, small: c.sm, fresh: c.fr, stale: c.st, median: c.md,
+    ideas: c.ideas || [], examples: c.ex ? [{ name: c.ex.n, rank: c.ex.rk, ratings: c.ex.r }] : [],
+    topGap: c.top ? { name: c.top.n, gap: c.top.gap } : null,
+  };
 }
+
+function ensureNightly() {
+  const n = state.nightly;
+  if (n.summary || n.loading) return;
+  n.loading = true;
+  n.error = null;
+  nightly.loadSummary()
+    .then((sum) => { n.summary = sum; })
+    .catch((e) => { n.error = e instanceof nightly.NotPublishedError ? 'missing' : 'failed'; })
+    .finally(() => { n.loading = false; refresh('niches'); });
+}
+
+function ensureNightlyCountry(cc) {
+  const n = state.nightly;
+  if (n.countries[cc] || n.countryLoading[cc]) return;
+  n.countryLoading[cc] = true;
+  nightly.loadCountry(cc)
+    .then((data) => { n.countries[cc] = data; })
+    .catch(() => { n.countries[cc] = { failed: true, categories: [] }; })
+    .finally(() => { n.countryLoading[cc] = false; refresh('niches'); });
+}
+
 
 /** Load the last saved auto-scan for the current country, unless a scan is running. */
 function loadAuto() {
   const a = state.auto;
   if (a.busy || a.country === state.country) return;
-  const saved = store.get('autoscan:' + state.country, null);
+  const saved = store.get('autoscan2:' + state.country, null);
   Object.assign(a, { country: state.country, results: saved?.results || null, at: saved?.at || 0, error: null, failed: 0 });
 }
 
@@ -307,7 +296,7 @@ async function runAutoScan() {
   if (token !== a.token) return;
   a.busy = false;
   a.at = Date.now();
-  if (!a.error && a.results.length) store.set('autoscan:' + cc, { at: a.at, results: a.results });
+  if (!a.error && a.results.length) store.set('autoscan2:' + cc, { at: a.at, results: a.results });
   refresh('niches');
 }
 
@@ -453,6 +442,7 @@ function toggleSaved(result) {
 // ---------- shared rendering ----------
 function tagsFor(a, f, { grossingChart = false } = {}) {
   const t = [];
+  if (a.gapInfo?.gap) t.push([gapVerdict(a.gapInfo.gap).key === 'strong' ? 'good' : 'info', `Gap ${a.gapInfo.gap}`]);
   if (f.grossing) t.push(['good', 'Top Grossing']);
   if (grossingChart && f.smallEarner) t.push(['good', 'Small earner']);
   else if (!grossingChart && f.beatable) t.push(['good', 'Under 1k ratings']);
@@ -479,7 +469,11 @@ const errorBox = (msg) => `<p class="error">${esc(msg)}</p>`;
 
 // ---------- views ----------
 const VIEWS = {
-  niches: { title: 'Niches', shell: () => (state.nicheMode === 'all' ? autoShell() : oneShell()), out: () => (state.nicheMode === 'all' ? autoOut() : oneOut()) },
+  niches: {
+    title: 'Niches',
+    shell: () => ({ top: topShell, all: autoShell, one: oneShell }[state.nicheMode])(),
+    out: () => ({ top: topOut, all: autoOut, one: oneOut }[state.nicheMode])(),
+  },
   keyword: { title: 'Keyword', shell: keywordShell, out: keywordOut },
   compare: { title: 'Countries', shell: compareShell, out: compareOut },
   ideas: { title: 'Ideas', shell: ideasShell, out: ideasOut },
@@ -488,16 +482,109 @@ const VIEWS = {
 
 // Niches
 const modeSwitch = () => `
-  <div class="seg" role="group" aria-label="Scan type">
-    <button type="button" data-mode="all" aria-pressed="${state.nicheMode === 'all'}">All categories</button>
+  <div class="seg seg3" role="group" aria-label="Niches view">
+    <button type="button" data-mode="top" aria-pressed="${state.nicheMode === 'top'}">Top apps</button>
+    <button type="button" data-mode="all" aria-pressed="${state.nicheMode === 'all'}">Categories</button>
     <button type="button" data-mode="one" aria-pressed="${state.nicheMode === 'one'}">One category</button>
   </div>`;
 
+// ---------- Top apps (nightly Gap scores) ----------
+const TOP_KINDS = [['gaps', 'Biggest gaps'], ['risers', 'Rising'], ['newcomers', 'New earners']];
+
+function topShell() {
+  ensureNightly();
+  const t = state.top;
+  if (t.cc) ensureNightlyCountry(t.cc);
+  return `${modeSwitch()}
+  <p class="intro">Every night we score every Top Grossing app in ${COUNTRIES.length} countries and ${GENRES.length} categories. High Gap scores are apps people pay for but are unhappy with.</p>
+  <div class="row">
+    <label class="field"><span>Country</span><select class="input" id="topCc">
+      <option value="">All countries</option>
+      ${REGIONS.map((r) => `<optgroup label="${esc(r)}">${COUNTRIES.filter((c) => c[3] === r).map(([c, n]) => `<option value="${c}"${c === t.cc ? ' selected' : ''}>${esc(n)}</option>`).join('')}</optgroup>`).join('')}
+    </select></label>
+    <label class="field"><span>Category</span><select class="input" id="topG">
+      <option value="">All categories</option>
+      ${GENRES.map(([id, n]) => `<option value="${id}"${String(id) === String(t.g) ? ' selected' : ''}>${esc(n)}</option>`).join('')}
+    </select></label>
+  </div>
+  <div class="chips">${TOP_KINDS.map(([k, l]) => `<button class="chip" type="button" data-top-kind="${k}" aria-pressed="${t.kind === k}">${l}</button>`).join('')}</div>
+  <div id="out"></div>`;
+}
+
+function topEntries() {
+  const t = state.top;
+  const sum = state.nightly.summary;
+  const byGenre = (list) => (t.g ? list.filter((e) => String(e.g) === String(t.g)) : list);
+  if (t.kind === 'gaps') {
+    if (t.cc) {
+      const data = state.nightly.countries[t.cc];
+      if (!data) return null;
+      return byGenre(data.categories.flatMap((c) => c.apps)).sort((a, b) => b.gap - a.gap).slice(0, 100);
+    }
+    return byGenre(sum.leaderboard);
+  }
+  const list = t.kind === 'risers' ? sum.risers : sum.newcomers;
+  return byGenre(t.cc ? list.filter((e) => e.cc === t.cc) : list);
+}
+
+function topRow(e, i) {
+  const a = nightly.toApp(e);
+  remember([a]);
+  const tags = [];
+  if (e.pr > 0 && e.pr > e.rk) tags.push(['good', `Up ${e.pr - e.rk} places (was #${e.pr})`]);
+  if (e.pr === -1) tags.push(['good', 'New in Top Grossing']);
+  tags.push(['info', `${fmt(e.r)} ratings`]);
+  if (e.r >= 20 && e.a) tags.push([e.uh >= 40 ? 'bad' : 'info', `${e.a.toFixed(1)}★`]);
+  const days = daysSince(e.up);
+  if (days > 270 && days !== Infinity) tags.push(['warn', `No update in ${Math.round(days / 30)} mo`]);
+  if (e.ic2 > 1) tags.push(['info', `Charts in ${e.ic2} countries`]);
+  const icon = e.ic ? `<img src="${esc(e.ic)}" alt="" loading="lazy" width="48" height="48">` : '<span class="ph"></span>';
+  const v = gapVerdict(e.gap);
+  return `<li><button class="app top-app" type="button" data-app="${esc(appKey(a))}">
+    <span class="rank">${i + 1}</span>${icon}
+    <span class="body">
+      <span class="name">${esc(e.n)}</span>
+      <span class="meta">${esc(CSHORT[e.cc] || e.cc)} · ${esc(GNAME[e.g] || '')} · #${e.rk} in Top Grossing</span>
+      <span class="tags">${tags.map(([k, l]) => `<span class="tag ${k}">${esc(l)}</span>`).join('')}</span>
+    </span>
+    <span class="score-pill ${v.key}" aria-label="Gap score ${e.gap}">${e.gap}</span>
+  </button></li>`;
+}
+
+function topOut() {
+  const n = state.nightly;
+  const t = state.top;
+  if (n.loading && !n.summary) return loading("Loading last night's scan…");
+  if (!n.summary) {
+    if (n.error === 'missing') {
+      return `<div class="empty"><p>The nightly scan hasn't published results yet.</p>
+        <p>It runs every night at about 02:30 UTC. Until then, use <b>Categories</b> or <b>One category</b> to scan live.</p></div>`;
+    }
+    return `${errorBox("Couldn't load last night's scan. Check your connection and try again.")}
+      <button class="btn ghost small" type="button" data-act="nightly-retry">Try again</button>`;
+  }
+  const sum = n.summary;
+  const meta = `<p class="note">Updated ${sinceText(Date.parse(sum.generatedAt))} · ${sum.scanned} charts${sum.trendSince ? ` · trends since ${esc(sum.trendSince)}` : ''}</p>`;
+  if (t.kind !== 'gaps' && !sum.trendSince) {
+    return `${meta}<div class="empty"><p>Trends appear once the scan has run on two different days. Check back tomorrow.</p></div>`;
+  }
+  if (t.kind === 'gaps' && t.cc && !n.countries[t.cc]) return meta + loading(`Loading ${CNAME[t.cc]}…`);
+  const list = topEntries() || [];
+  if (!list.length) return `${meta}<div class="empty"><p>Nothing here for this filter${t.kind === 'gaps' && !t.cc ? '. The overall list keeps the best 150 apps; pick a country to see more for one category' : ''}.</p></div>`;
+  const explain = {
+    gaps: 'Gap score = Top Grossing rank (35%) + ratings count (25%) + unhappy users: rated below the typical app in its chart, or not updated for months (30%) + not a giant (10%). Tap an app for details and complaints.',
+    risers: 'Apps that climbed at least 10 places in Top Grossing and are now in the top 50. A niche that is heating up.',
+    newcomers: 'Apps with under 5k ratings that entered the top 60 in Top Grossing. Small apps starting to earn.',
+  }[t.kind];
+  return `${meta}<ol class="list top-list">${list.map(topRow).join('')}</ol><p class="note">${esc(explain)}</p>`;
+}
+
 function autoShell() {
   loadAuto();
+  ensureNightly();
   return `${modeSwitch()}
-  <p class="intro">Scans Top Grossing in all ${GENRES.length} categories and ranks them by how much room there is for small apps, weighed against market size.</p>
-  <button class="btn" id="autoBtn" type="button" data-act="autoscan">Scan all categories</button>
+  <p class="intro">All ${GENRES.length} categories in ${esc(CNAME[state.country])}, ranked by room for small apps, market size and the biggest Gap scores. Change the country at the top.</p>
+  <button class="btn ghost" id="autoBtn" type="button" data-act="autoscan">Scan live now</button>
   <div id="out"></div>`;
 }
 
@@ -515,6 +602,7 @@ function nicheCard(n, i) {
       ${n.stale ? `<span class="tag warn">${n.stale} neglected</span>` : ''}
     </div>
     ${ex ? `<p class="niche-ex">Example: <b>${esc(ex.name)}</b> is #${ex.rank} in Top Grossing with ${fmt(ex.ratings)} ratings.</p>` : ''}
+    ${n.topGap && n.topGap.gap ? `<p class="niche-ex">Biggest gap: <b>${esc(n.topGap.name)}</b> (Gap ${n.topGap.gap})</p>` : ''}
     ${n.ideas.length ? `<div class="chips">${n.ideas.map((k) => `<button class="chip" type="button" data-kw="${esc(k)}">${esc(k)}</button>`).join('')}</div>` : ''}
     <button class="linklike" type="button" data-open-genre="${esc(n.genreId)}">See the full chart →</button>
   </li>`;
@@ -531,21 +619,32 @@ function autoOut() {
     parts.push(`<div class="progress-card"><div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><i style="width:${pct}%"></i></div><p class="note">${esc(msg)}</p></div>`);
   }
   if (a.error) parts.push(errorBox(`${a.error} Categories scanned so far are below.`));
-  const res = a.country === state.country ? a.results : null;
+  // Show whichever is newer: a live scan on this phone or last night's scan.
+  const sum = state.nightly.summary;
+  const nightlyAt = sum ? Date.parse(sum.generatedAt) : 0;
+  const nightlyRows = sum ? sum.categories.filter((c) => c.cc === state.country).map(fromNightlyCategory).sort((x, y) => y.score - x.score) : [];
+  const live = a.country === state.country && a.results?.length ? a.results : null;
+  let res = null;
+  let source = '';
+  if (live && (a.busy || a.at >= nightlyAt || !nightlyRows.length)) { res = live; source = a.busy ? '' : `Scanned live ${sinceText(a.at)}.`; }
+  else if (nightlyRows.length && !a.busy) { res = nightlyRows; source = `From last night's scan, updated ${sinceText(nightlyAt)}.`; }
   if (!res || !res.length) {
     if (!a.busy) {
-      parts.push(`<div class="empty"><p>Tap <b>Scan all categories</b> to rank every category in ${esc(CNAME[state.country])} by how open it is to small apps.</p>
-        <p>The first scan takes 1–2 minutes. Scanning again within 6 hours is almost instant.</p></div>`);
+      if (state.nightly.loading) parts.push(loading("Loading last night's scan…"));
+      else {
+        parts.push(`<div class="empty"><p>${sum ? `Last night's scan has no data for ${esc(CNAME[state.country])}.` : "Last night's scan isn't available yet."} Tap <b>Scan live now</b> to rank every category in ${esc(CNAME[state.country])}.</p>
+          <p>A live scan takes 1–2 minutes. Scanning again within 6 hours is almost instant.</p></div>`);
+      }
     }
     return parts.join('');
   }
   if (!a.busy) {
     const best = res.filter((n) => n.verdict.key === 'strong').slice(0, 3).map((n) => n.name);
     const lead = best.length ? `Best bets in ${CNAME[state.country]}: <b>${best.map(esc).join(', ')}</b>.` : `No category in ${esc(CNAME[state.country])} scores as Promising right now. Look at the Possible ones.`;
-    parts.push(`<p class="read">${lead} Scanned ${sinceText(a.at)}.${a.failed ? ` ${a.failed} ${a.failed === 1 ? 'category' : 'categories'} couldn't be loaded.` : ''}</p>`);
+    parts.push(`<p class="read">${lead} ${source}${a.failed && res === live ? ` ${a.failed} ${a.failed === 1 ? 'category' : 'categories'} couldn't be loaded.` : ''}</p>`);
   }
   parts.push(`<ol class="niche-list">${res.map((n, i) => nicheCard(n, i + 1)).join('')}</ol>`);
-  parts.push('<p class="note">Score = room for small apps (small earners, new apps, neglected apps) weighed against market size. 65+ Promising, 50–64 Possible. Tap a keyword to score it.</p>');
+  parts.push('<p class="note">Score = half room for small apps (small earners, new and neglected apps, weighed against market size) and half the average of the 5 biggest Gap scores. 55+ Promising, 45–54 Possible. Tap a keyword to score it.</p>');
   return parts.join('');
 }
 
@@ -805,13 +904,26 @@ function attachSummaryToIdea(r, entry) {
   putIdea(idea);
 }
 
-function addIdea(fields) {
+function addIdea(fields, extra = {}) {
   const existing = fields.kw ? ideas.findIdea(ideas.loadIdeas(), fields.kw, fields.cc) : null;
   if (existing) return openIdea(existing.id);
   const idea = ideas.createIdea({ ...fields, summary: fields.kw ? cs.getCached(fields.kw, fields.cc) : null });
+  Object.assign(idea, extra);
   putIdea(idea);
   toast('Added to Ideas');
   openIdea(idea.id);
+}
+
+/** Start an idea from a competitor app: its main phrase becomes the keyword, the app goes into notes. */
+function appToIdea(a) {
+  if (!a) return;
+  // "Brand: what it does" or "Brand – what it does": the part after the brand makes the better keyword.
+  const parts = a.name.split(/\s*[:|–—]\s*|\s+-\s+/).filter(Boolean);
+  const descriptor = parts.length > 1 ? parts.slice(1).join(' ') : a.name;
+  const kw = pickIdeas(titleIdeas([descriptor], { min: 1, limit: 8 }).map((i) => i.text), a.genre || '')[0] || '';
+  const g = a.gapInfo;
+  const note = `Competitor: ${a.name} (${a.seller || 'unknown developer'}), ${g ? `#${g.rank} in ${a.genre} Top Grossing, Gap score ${g.gap}, ` : ''}${fmt(a.ratings)} ratings, ${(a.rating || 0).toFixed(1)}★, updated ${ago(a.updated)}.`;
+  addIdea({ kw, cc: a.cc, category: a.genre || '' }, { name: `Better ${a.name.split(/[:\-–—|]/)[0].trim()}`, notes: note });
 }
 
 function ideasShell() {
@@ -1084,6 +1196,7 @@ window.addEventListener('hashchange', () => { render(); window.scrollTo(0, 0); }
 async function openApp(key) {
   const a = state.apps.get(key);
   if (!a) return;
+  sheet.dataset.app = key;
   const nameIdeas = titleIdeas([a.name], { min: 1, limit: 8 });
   sheet.dataset.mode = 'app';
   sheet.innerHTML = `
@@ -1101,7 +1214,17 @@ async function openApp(key) {
       <div><b>${esc(a.priceText || (a.price ? a.price : 'Free'))}</b><span>price</span></div>
       <div><b>${esc(a.genre || GNAME[a.genreId] || '–')}</b><span>category</span></div>
     </div>
-    ${a.url ? `<a class="store-link" href="${esc(a.url)}" target="_blank" rel="noopener">Open in App Store ↗</a>` : ''}
+    ${a.gapInfo?.gap ? `<section class="section"><h3>Gap score ${a.gapInfo.gap} · ${esc(gapVerdict(a.gapInfo.gap).label)}</h3>
+      <div class="facts gap-facts">
+        <div><b>${a.gapInfo.money}</b><span>money (#${a.gapInfo.rank} in Top Grossing)</span></div>
+        <div><b>${a.gapInfo.demand}</b><span>demand (ratings)</span></div>
+        <div><b>${a.gapInfo.unhappy}</b><span>unhappy users</span></div>
+        <div><b>${a.gapInfo.beatable}</b><span>beatable</span></div>
+      </div></section>` : ''}
+    <div class="row">
+      ${a.url ? `<a class="store-link" href="${esc(a.url)}" target="_blank" rel="noopener">Open in App Store ↗</a>` : ''}
+      <button class="btn ghost small" type="button" data-act="app-to-idea" style="flex:0 0 auto">Add to ideas</button>
+    </div>
     ${nameIdeas.length ? `<section class="section"><h3>Score words from its name</h3><div class="chips">${nameIdeas.map((i) => `<button class="chip" type="button" data-kw="${esc(i.text)}">${esc(i.text)}</button>`).join('')}</div></section>` : ''}
     <section class="section">
       <h3>What users complain about</h3>
@@ -1134,6 +1257,7 @@ sheet.addEventListener('click', (e) => {
   const kw = e.target.closest('[data-kw]');
   if (kw) { sheet.close(); checkKeyword(kw.dataset.kw); return; }
   const act = e.target.closest('[data-act]')?.dataset.act;
+  if (act === 'app-to-idea') { appToIdea(state.apps.get(sheet.dataset.app)); return; }
   if (act && act.startsWith('idea-')) ideaSheetAction(act);
 });
 
@@ -1213,6 +1337,9 @@ view.addEventListener('click', (e) => {
     return;
   }
   const act = t.closest('[data-act]')?.dataset.act;
+  const topKind = t.closest('[data-top-kind]')?.dataset.topKind;
+  if (topKind) { state.top.kind = topKind; render(); return; }
+  if (act === 'nightly-retry') { ensureNightly(); refresh('niches'); return; }
   const mode = t.closest('[data-mode]')?.dataset.mode;
   if (mode && mode !== state.nicheMode) { state.nicheMode = mode; store.set('nicheMode', mode); render(); return; }
   const genre = t.closest('[data-open-genre]')?.dataset.openGenre;
@@ -1249,6 +1376,19 @@ view.addEventListener('click', (e) => {
   }
   if (act === 'cs-key-cancel') { Object.assign(state.cs, { keyForm: false, needsKey: false, error: null }); refreshCs(); }
   if (act === 'cs-key-remove') { cs.setKey(''); refresh('saved'); toast('API key removed'); }
+});
+
+view.addEventListener('change', (e) => {
+  if (e.target.id === 'topCc') {
+    state.top.cc = e.target.value;
+    store.set('topCc', state.top.cc);
+    if (state.top.cc) ensureNightlyCountry(state.top.cc);
+    refresh('niches');
+  } else if (e.target.id === 'topG') {
+    state.top.g = e.target.value;
+    store.set('topG', state.top.g);
+    refresh('niches');
+  }
 });
 
 view.addEventListener('keydown', (e) => {

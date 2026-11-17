@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  keywordReport, nicheReport, nicheScore, titleIdeas, titleMatches, appFlags, median, mostCommon, verdictFor, DAY,
+  keywordReport, nicheReport, nicheScore, appGap, ratingBaseline, categoryScore, pickIdeas, titleIdeas, titleMatches, appFlags, median, mostCommon, verdictFor, DAY,
 } from '../js/scoring.js';
 
 const NOW = Date.parse('2026-11-15T00:00:00Z');
@@ -108,6 +108,50 @@ test('nicheScore balances room for newcomers against market size', () => {
   assert.equal(health.sizeLabel, 'Big market');
   assert.equal(travel.verdict.key, 'strong');
   for (const r of [travel, devTools, health]) assert.ok(r.score >= 0 && r.score <= 100);
+});
+
+test('appGap: paid-for, used, unhappy, beatable app scores high', () => {
+  const g = appGap({ ratings: 8000, rating: 3.6, updated: daysAgo(425) }, { rank: 12, baseline: 4.6, now: NOW });
+  assert.ok(g.gap >= 55, `gap ${g.gap}`);
+  assert.equal(g.money, Math.round(100 - 40 * Math.log10(12)));
+  assert.ok(g.unhappy >= 60, `unhappy ${g.unhappy}`);
+});
+
+test('appGap: happy giant scores low even at #1', () => {
+  const g = appGap({ ratings: 2000000, rating: 4.8, updated: daysAgo(3) }, { rank: 1, baseline: 4.6, now: NOW });
+  assert.equal(g.unhappy, 0);
+  assert.equal(g.beatable, 0);
+  assert.ok(g.gap < 40, `gap ${g.gap}`);
+});
+
+test('appGap: rating judged against the chart baseline', () => {
+  const app = { ratings: 3000, rating: 4.2, updated: daysAgo(10) };
+  const strict = appGap(app, { rank: 20, baseline: 4.8, now: NOW });
+  const lenient = appGap(app, { rank: 20, baseline: 4.3, now: NOW });
+  assert.ok(strict.unhappy > lenient.unhappy);
+  // too few ratings: the average is ignored
+  assert.equal(appGap({ ratings: 5, rating: 1, updated: daysAgo(10) }, { rank: 5, now: NOW }).lowRating, 0);
+  for (const k of ['gap', 'money', 'demand', 'unhappy', 'beatable']) assert.ok(strict[k] >= 0 && strict[k] <= 100);
+});
+
+test('ratingBaseline', () => {
+  const apps = [4.9, 4.9, 4.8, 4.9, 4.95].map((rating) => ({ rating, ratings: 100 }));
+  assert.equal(ratingBaseline(apps), 4.8); // capped
+  assert.equal(ratingBaseline([{ rating: 3, ratings: 100 }]), 4.6); // too few rated apps
+  assert.equal(ratingBaseline([4.0, 4.1, 4.4, 4.5, 4.4].map((rating) => ({ rating, ratings: 50 }))), 4.4);
+});
+
+test('categoryScore blends niche room with the best gaps', () => {
+  const rep = { small: 57, fresh: 27, stale: 1, medianRatings: 3135 };
+  const c = categoryScore(rep, [70, 60, 50, 40, 30, 10]);
+  assert.equal(c.gapTop, 50);
+  assert.equal(c.score, Math.round(0.5 * c.niche + 0.5 * 50));
+  assert.equal(categoryScore(rep, []).gapTop, 0);
+});
+
+test('pickIdeas prefers phrases and drops category words', () => {
+  assert.deepEqual(pickIdeas(['travel', 'flight tracker', 'flight', 'radar', 'plane radar', 'seat maps'], 'Travel'),
+    ['flight tracker', 'plane radar', 'seat maps']);
 });
 
 test('mostCommon', () => {

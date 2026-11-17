@@ -174,6 +174,73 @@ export function nicheScore(report) {
   return { score, room, size, sizeLabel, verdict };
 }
 
+/**
+ * Gap score for one app in a Top Grossing chart: users pay for it and use it,
+ * but they are unhappy, and a small developer could compete.
+ *  money (35%):     Top Grossing rank, log scale (#1 → 100, #10 → 60, #100 → 20)
+ *  demand (25%):    ratings count, log scale (100 → 25, 1k → 50, 10k → 75, 100k → 100)
+ *  unhappy (30%):   rated below the typical app in its chart, no recent update,
+ *                   current version rated lower than all-time (when Apple reports it separately)
+ *  beatable (10%):  not a giant (1k ratings → 100, 10k → 50, 100k → 0)
+ *  gap: weighted geometric mean, so a happy or tiny app can't score high
+ *
+ * `baseline` is the typical rating in the same chart (see ratingBaseline), because
+ * people rate more generously in some countries than in others.
+ */
+export function appGap(app, { rank = 100, baseline = 4.6, now = Date.now() } = {}) {
+  const ratings = app.ratings || 0;
+  const money = Math.round(clamp(100 - 40 * Math.log10(Math.max(1, rank))));
+  const demand = Math.round(clamp((Math.log10(ratings + 1) - 1) * 25));
+
+  const hasRating = ratings >= LIMITS.minRatingsForRating && app.rating > 0;
+  const lowRating = hasRating ? clamp(((baseline - app.rating) / 1.2) * 100) : 0; // 1.2★ below typical → 100
+  const cur = app.currentRating || 0;
+  const versionDrop = hasRating && cur > 0 && (app.currentRatings || 0) >= 10 && cur < app.rating
+    ? clamp((app.rating - cur) * 60) // a full star lower → 60
+    : 0;
+  const days = daysSince(app.updated, now);
+  const stale = days === Infinity ? 0 : clamp(((days - 180) / 550) * 100); // 6 months → 0, 2 years → 100
+  const unhappy = Math.round(clamp(lowRating * 0.75 + stale * 0.5 + versionDrop * 0.4));
+
+  const beatable = Math.round(clamp(100 - (Math.log10(ratings + 1) - 3) * 50));
+  const gap = Math.round(
+    Math.pow(Math.max(money, 1), 0.35) * Math.pow(Math.max(demand, 1), 0.25)
+    * Math.pow(Math.max(unhappy, 5), 0.3) * Math.pow(Math.max(beatable, 10), 0.1),
+  );
+  return { gap, money, demand, unhappy, beatable, lowRating: Math.round(lowRating), versionDrop: Math.round(versionDrop), stale: Math.round(stale), days };
+}
+
+/** Typical rating in a chart: median of apps with enough ratings, kept between 4.3 and 4.8. */
+export function ratingBaseline(apps) {
+  const rated = apps.filter((a) => (a.ratings || 0) >= LIMITS.minRatingsForRating && a.rating > 0).map((a) => a.rating);
+  if (rated.length < 5) return 4.6;
+  return Math.min(4.8, Math.max(4.3, median(rated)));
+}
+
+export function gapVerdict(score) {
+  if (score >= 55) return { key: 'strong', label: 'Hot' };
+  if (score >= 40) return { key: 'maybe', label: 'Worth a look' };
+  return { key: 'weak', label: 'Low' };
+}
+
+/**
+ * Category score for one country: the niche's room for newcomers (nicheScore)
+ * combined with how big the best gaps in it are (average of the top 5 Gap scores).
+ */
+export function categoryScore(report, gaps) {
+  const niche = nicheScore(report);
+  const top = [...gaps].sort((a, b) => b - a).slice(0, 5);
+  const gapTop = top.length ? Math.round(top.reduce((s, g) => s + g, 0) / top.length) : 0;
+  const score = Math.round(0.5 * niche.score + 0.5 * gapTop);
+  return { score, niche: niche.score, gapTop, sizeLabel: niche.sizeLabel, verdict: categoryVerdict(score) };
+}
+
+export function categoryVerdict(score) {
+  if (score >= 55) return { key: 'strong', label: 'Promising' };
+  if (score >= 45) return { key: 'maybe', label: 'Possible' };
+  return { key: 'weak', label: 'Tough' };
+}
+
 const STOP = new Set(
   ('the and for with your you my me our app apps a an of to in on by at or is it this that from free pro plus lite hd ' +
     'premium best top official new edition version mobile ios iphone ipad der die das und für mit von la le les de des et')
@@ -214,4 +281,15 @@ export function mostCommon(values) {
   let n = 0;
   c.forEach((k, v) => { if (k > n) { n = k; best = v; } });
   return best;
+}
+
+/** Phrases first, no words from the category's own name, no single words already inside a phrase. */
+export function pickIdeas(ideas, categoryName, limit = 5) {
+  const cat = new Set(tokens(categoryName));
+  const isCat = (w) => cat.has(w) || cat.has(w + 's') || cat.has(w.replace(/s$/, ''));
+  const useful = ideas.filter((t) => !t.split(' ').every(isCat));
+  const phrases = useful.filter((t) => t.includes(' '));
+  const inPhrase = new Set(phrases.flatMap((t) => t.split(' ')));
+  const words = useful.filter((t) => !t.includes(' ') && !inPhrase.has(t));
+  return [...phrases, ...words].slice(0, limit);
 }
