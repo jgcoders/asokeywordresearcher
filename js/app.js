@@ -4,15 +4,56 @@ import * as ideas from './ideas.js';
 import { keywordReport, nicheReport, nicheScore, titleIdeas, tokens, daysSince, mostCommon, verdictFor } from './scoring.js';
 
 // ---------- constants ----------
+// [App Store country code, name, short label, region]
 const COUNTRIES = [
-  ['us', 'United States', 'US'],
-  ['gb', 'United Kingdom', 'UK'],
-  ['ca', 'Canada', 'Canada'],
-  ['au', 'Australia', 'Australia'],
-  ['de', 'Germany', 'Germany'],
-  ['jp', 'Japan', 'Japan'],
+  ['us', 'United States', 'US', 'English-speaking'],
+  ['gb', 'United Kingdom', 'UK', 'English-speaking'],
+  ['ca', 'Canada', 'Canada', 'English-speaking'],
+  ['au', 'Australia', 'Australia', 'English-speaking'],
+  ['nz', 'New Zealand', 'New Zealand', 'English-speaking'],
+  ['ie', 'Ireland', 'Ireland', 'English-speaking'],
+  ['sg', 'Singapore', 'Singapore', 'English-speaking'],
+  ['de', 'Germany', 'Germany', 'Europe'],
+  ['fr', 'France', 'France', 'Europe'],
+  ['it', 'Italy', 'Italy', 'Europe'],
+  ['es', 'Spain', 'Spain', 'Europe'],
+  ['nl', 'Netherlands', 'Netherlands', 'Europe'],
+  ['be', 'Belgium', 'Belgium', 'Europe'],
+  ['at', 'Austria', 'Austria', 'Europe'],
+  ['ch', 'Switzerland', 'Switzerland', 'Europe'],
+  ['se', 'Sweden', 'Sweden', 'Europe'],
+  ['no', 'Norway', 'Norway', 'Europe'],
+  ['dk', 'Denmark', 'Denmark', 'Europe'],
+  ['fi', 'Finland', 'Finland', 'Europe'],
+  ['pl', 'Poland', 'Poland', 'Europe'],
+  ['pt', 'Portugal', 'Portugal', 'Europe'],
+  ['jp', 'Japan', 'Japan', 'Asia'],
+  ['kr', 'South Korea', 'Korea', 'Asia'],
+  ['tw', 'Taiwan', 'Taiwan', 'Asia'],
+  ['hk', 'Hong Kong', 'Hong Kong', 'Asia'],
+  ['cn', 'China', 'China', 'Asia'],
+  ['in', 'India', 'India', 'Asia'],
+  ['ae', 'United Arab Emirates', 'UAE', 'Middle East'],
+  ['sa', 'Saudi Arabia', 'Saudi Arabia', 'Middle East'],
+  ['il', 'Israel', 'Israel', 'Middle East'],
+  ['tr', 'Turkey', 'Turkey', 'Middle East'],
+  ['br', 'Brazil', 'Brazil', 'Latin America'],
+  ['mx', 'Mexico', 'Mexico', 'Latin America'],
 ];
 const CNAME = Object.fromEntries(COUNTRIES.map(([c, n]) => [c, n]));
+const CSHORT = Object.fromEntries(COUNTRIES.map(([c, , sh]) => [c, sh]));
+const REGIONS = [...new Set(COUNTRIES.map((c) => c[3]))];
+
+// Countries tab: which countries to compare. Apple limits request speed, so cap the set.
+const COMPARE_MAX = 12;
+const COMPARE_PRESETS = [
+  ['Top payers', ['us', 'gb', 'ca', 'au', 'de', 'jp']],
+  ['English', ['us', 'gb', 'ca', 'au', 'nz', 'ie', 'sg']],
+  ['Europe', ['de', 'fr', 'it', 'es', 'nl', 'ch', 'se', 'no', 'dk', 'at', 'be', 'pl']],
+  ['Asia', ['jp', 'kr', 'tw', 'hk', 'cn', 'sg', 'in']],
+  ['Rich & small', ['ch', 'no', 'dk', 'se', 'nl', 'at', 'ie', 'nz', 'sg', 'ae', 'il', 'fi']],
+];
+const DEFAULT_COMPARE = COMPARE_PRESETS[0][1];
 
 const GENRES = [
   [6018, 'Books'], [6000, 'Business'], [6026, 'Developer Tools'], [6017, 'Education'], [6016, 'Entertainment'],
@@ -84,6 +125,11 @@ const state = {
   auto: { busy: false, error: null, token: 0, done: 0, failed: 0, current: '', waiting: false, results: null, country: null, at: 0 },
   ideasFilter: 'all',
   cs: { key: null, busy: false, step: '', error: null, needsKey: false, keyForm: false, entry: null, token: 0 },
+  cmpCountries: (() => {
+    const v = store.get('cmpCountries', DEFAULT_COMPARE);
+    const ok = Array.isArray(v) ? v.filter((c) => CNAME[c]).slice(0, COMPARE_MAX) : [];
+    return ok.length ? ok : [...DEFAULT_COMPARE];
+  })(),
   apps: new Map(), // id|country → app, for the details sheet
 };
 
@@ -158,7 +204,7 @@ async function runCompare(text) {
   const t = String(text || '').trim();
   if (!t) return;
   const token = ++s.token;
-  Object.assign(s, { text: t, busy: true, error: null, rows: COUNTRIES.map(([cc]) => ({ cc, status: 'wait' })) });
+  Object.assign(s, { text: t, busy: true, error: null, rows: state.cmpCountries.map((cc) => ({ cc, status: 'wait' })) });
   refresh('compare');
   for (const row of s.rows) {
     if (token !== s.token) return;
@@ -367,6 +413,14 @@ function sinceText(ts) {
   const h = Math.round(m / 60);
   if (h < 48) return `${h} h ago`;
   return `${Math.round(h / 24)} days ago`;
+}
+
+function refreshPicker() {
+  const box = $('#cmpPicker');
+  if (!box) return;
+  const wasOpen = box.querySelector('details')?.open;
+  box.innerHTML = comparePickerHtml();
+  if (wasOpen) box.querySelector('details').open = true;
 }
 
 function checkKeyword(text) {
@@ -621,28 +675,50 @@ function keywordOut() {
 }
 
 // Compare
+function comparePickerHtml() {
+  const sel = new Set(state.cmpCountries);
+  const full = sel.size >= COMPARE_MAX;
+  const presets = COMPARE_PRESETS.map(([label, list]) => `<button class="chip" type="button" data-cmp-preset="${esc(label)}">${esc(label)}</button>`).join('');
+  const groups = REGIONS.map((region) => `<div class="cmp-region"><span>${esc(region)}</span><div class="chips">${
+    COUNTRIES.filter((c) => c[3] === region).map(([c, , short]) => {
+      const on = sel.has(c);
+      return `<button class="chip" type="button" data-cmp-cc="${c}" aria-pressed="${on}"${!on && full ? ' disabled' : ''}>${esc(short)}</button>`;
+    }).join('')
+  }</div></div>`).join('');
+  const secs = Math.max(5, Math.round(sel.size * 2.5));
+  return `<details class="cmp-pick">
+    <summary>Countries: <b>${state.cmpCountries.map((c) => esc(CSHORT[c])).join(', ')}</b></summary>
+    <div class="cmp-pick-body">
+      <div class="chips">${presets}</div>
+      ${groups}
+      <p class="note">${sel.size} of ${COMPARE_MAX} max selected · about ${secs} seconds per comparison.</p>
+    </div>
+  </details>`;
+}
+
 function compareShell() {
   return `
-  <p class="intro">Score one keyword in all six countries. Look for a country where demand exists but competition is weaker.</p>
+  <p class="intro">Score one keyword in several countries at once. Look for a country where demand exists but competition is weaker.</p>
+  <div id="cmpPicker">${comparePickerHtml()}</div>
   <form class="form" id="cmpForm">
     <div class="row">
       <input type="search" id="cmpInput" placeholder="e.g. budget planner" enterkeyhint="search" autocapitalize="none" autocorrect="off" autocomplete="off" value="${esc(state.cmp.text)}" aria-label="Keyword to compare">
       <button class="btn" id="cmpBtn" type="submit" style="flex:0 0 auto">Compare</button>
     </div>
   </form>
-  <p class="note">German and Japanese users mostly search in their own language. Also try the translated keyword, for example "Pflanzenpflege" or "家計簿".</p>
+  <p class="note">Outside English-speaking countries, most people search in their own language. Also try the translated keyword, for example "Pflanzenpflege" (German) or "家計簿" (Japanese).</p>
   <div id="out"></div>`;
 }
 
 function compareOut() {
   const s = state.cmp;
   if (!s.rows) {
-    return `<div class="empty"><p>Type a keyword and tap <b>Compare</b>. It takes about 15 seconds, because Apple limits how fast we can ask.</p></div>`;
+    return `<div class="empty"><p>Pick your countries, type a keyword and tap <b>Compare</b>. Apple limits how fast we can ask, so each country takes a couple of seconds.</p></div>`;
   }
   const done = s.rows.filter((r) => r.status === 'done');
   const best = !s.busy && done.length ? done.reduce((a, b) => (b.result.report.opportunity > a.result.report.opportunity ? b : a)) : null;
   const rows = s.rows.map((row) => {
-    const name = esc(COUNTRIES.find(([c]) => c === row.cc)[2]);
+    const name = esc(CSHORT[row.cc] || row.cc);
     if (row.status !== 'done') {
       const label = { wait: 'Waiting', busy: 'Checking…', error: 'Failed', skipped: 'Skipped' }[row.status];
       return `<tr><td>${name}</td><td colspan="5" class="note">${row.status === 'busy' ? '<span class="spinner" style="display:inline-block;vertical-align:-3px;margin-right:6px"></span>' : ''}${label}</td></tr>`;
@@ -1100,6 +1176,23 @@ view.addEventListener('click', (e) => {
     if (x) { setCountry(x.cc); checkKeyword(x.kw); }
     return;
   }
+  const pickCc = t.closest('[data-cmp-cc]');
+  if (pickCc) {
+    const cc = pickCc.dataset.cmpCc;
+    const list = state.cmpCountries;
+    if (list.includes(cc)) { if (list.length > 1) list.splice(list.indexOf(cc), 1); } else if (list.length < COMPARE_MAX) list.push(cc);
+    // keep the region order of the master list
+    state.cmpCountries = COUNTRIES.map((c) => c[0]).filter((c) => list.includes(c));
+    store.set('cmpCountries', state.cmpCountries);
+    refreshPicker();
+    return;
+  }
+  const preset = t.closest('[data-cmp-preset]');
+  if (preset) {
+    const found = COMPARE_PRESETS.find(([label]) => label === preset.dataset.cmpPreset);
+    if (found) { state.cmpCountries = found[1].slice(0, COMPARE_MAX); store.set('cmpCountries', state.cmpCountries); refreshPicker(); }
+    return;
+  }
   const ideaBtn = t.closest('[data-idea]');
   if (ideaBtn) return openIdea(ideaBtn.dataset.idea);
   const filter = t.closest('[data-ifilter]');
@@ -1193,7 +1286,9 @@ function copyCsv() {
 
 // ---------- country picker ----------
 const countrySel = $('#country');
-countrySel.innerHTML = COUNTRIES.map(([c, , short]) => `<option value="${c}">${esc(short)}</option>`).join('');
+countrySel.innerHTML = REGIONS.map((region) => `<optgroup label="${esc(region)}">${
+  COUNTRIES.filter((c) => c[3] === region).map(([c, , short]) => `<option value="${c}">${esc(short)}</option>`).join('')
+}</optgroup>`).join('');
 countrySel.value = state.country;
 
 function setCountry(cc) {

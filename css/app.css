@@ -461,3 +461,13 @@ textarea, .copy-box {
   .tabbar a { font-size: 10px; }
   .idea-form .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* ---------- countries picker ---------- */
+.cmp-pick { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; }
+.cmp-pick summary { padding: 12px 14px; cursor: pointer; font-size: 14.5px; color: var(--muted); list-style-position: inside; overflow-wrap: anywhere; }
+.cmp-pick summary b { color: var(--fg); font-weight: 600; }
+.cmp-pick-body { padding: 0 14px 14px; display: flex; flex-direction: column; gap: 12px; }
+.cmp-region { display: flex; flex-direction: column; gap: 6px; }
+.cmp-region > span { font: 600 12px var(--sans); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.cmp-pick .chip { font-size: 13.5px; padding: 6px 11px; }
+.chip:disabled { opacity: 0.4; cursor: not-allowed; }
