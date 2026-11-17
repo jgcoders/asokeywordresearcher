@@ -1,0 +1,56 @@
+name: App Store scan
+
+# Run by hand only (Actions → App Store scan → Run workflow); there is no schedule.
+# Scans Top Grossing in every country × category, scores every app and
+# category, and publishes the results to the `data` branch, which the app
+# reads. The `data` branch is replaced on every run so the repository doesn't
+# grow; it keeps 30 days of chart positions for trends.
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: app-store-scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Get the previous results (for trends)
+        run: |
+          mkdir -p "$RUNNER_TEMP/prev"
+          if git ls-remote --exit-code --heads origin data > /dev/null; then
+            git fetch --depth=1 origin data
+            git archive FETCH_HEAD | tar -x -C "$RUNNER_TEMP/prev"
+            echo "Previous results found."
+          else
+            echo "No data branch yet; trends start with the next scan."
+          fi
+
+      - name: Scan the App Store
+        run: node scripts/scan.mjs --out "$RUNNER_TEMP/out" --prev "$RUNNER_TEMP/prev"
+
+      - name: Publish to the data branch
+        working-directory: ${{ runner.temp }}/out
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git init -q -b data
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "App Store scan $(date -u +%F)"
+          git push --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" data
