@@ -572,7 +572,7 @@ function topOut() {
   const list = topEntries() || [];
   if (!list.length) return `${meta}<div class="empty"><p>Nothing here for this filter${t.kind === 'gaps' && !t.cc ? '. The overall list keeps the best 150 apps; pick a country to see more for one category' : ''}.</p></div>`;
   const explain = {
-    gaps: 'Gap score = Top Grossing rank (35%) + ratings count (25%) + unhappy users: rated below the typical app in its chart, or not updated for months (30%) + not a giant (10%). Tap an app for details and complaints.',
+    gaps: 'Gap score = Top Grossing rank (30%) + ratings count (20%) + unhappy users: rated below the typical app in its chart, or not updated for months (30%) + not a giant worldwide (20%). Sports, news, social, entertainment and music apps get a discount because content rights or networks protect them. Tap an app for details and complaints.',
     risers: 'Apps that climbed at least 10 places in Top Grossing and are now in the top 50. A niche that is heating up.',
     newcomers: 'Apps with under 5k ratings that entered the top 60 in Top Grossing. Small apps starting to earn.',
   }[t.kind];

@@ -177,11 +177,11 @@ export function nicheScore(report) {
 /**
  * Gap score for one app in a Top Grossing chart: users pay for it and use it,
  * but they are unhappy, and a small developer could compete.
- *  money (35%):     Top Grossing rank, log scale (#1 → 100, #10 → 60, #100 → 20)
- *  demand (25%):    ratings count, log scale (100 → 25, 1k → 50, 10k → 75, 100k → 100)
+ *  money (30%):     Top Grossing rank, log scale (#1 → 100, #10 → 60, #100 → 20)
+ *  demand (20%):    ratings count, log scale (100 → 25, 1k → 50, 10k → 75, 100k → 100)
  *  unhappy (30%):   rated below the typical app in its chart, no recent update,
  *                   current version rated lower than all-time (when Apple reports it separately)
- *  beatable (10%):  not a giant (1k ratings → 100, 10k → 50, 100k → 0)
+ *  beatable (20%):  not a giant (counted worldwide) (1k ratings → 100, 10k → 50, 100k → 0)
  *  gap: weighted geometric mean, so a happy or tiny app can't score high
  *
  * `baseline` is the typical rating in the same chart (see ratingBaseline), because
@@ -207,8 +207,8 @@ export function appGap(app, { rank = 100, baseline = 4.6, now = Date.now(), genr
   const beatable = Math.round(clamp(100 - (Math.log10(sizeRatings + 1) - 3) * 50));
   const moat = MOAT_GENRES[String(genreId)] || 1;
   const gap = Math.round(
-    moat * Math.pow(Math.max(money, 1), 0.35) * Math.pow(Math.max(demand, 1), 0.25)
-    * Math.pow(Math.max(unhappy, 5), 0.3) * Math.pow(Math.max(beatable, 10), 0.1),
+    moat * Math.pow(Math.max(money, 1), 0.3) * Math.pow(Math.max(demand, 1), 0.2)
+    * Math.pow(Math.max(unhappy, 5), 0.3) * Math.pow(Math.max(beatable, 1), 0.2),
   );
   return { gap, money, demand, unhappy, beatable, moat, lowRating: Math.round(lowRating), versionDrop: Math.round(versionDrop), stale: Math.round(stale), days };
 }
