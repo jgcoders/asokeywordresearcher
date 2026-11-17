@@ -5,15 +5,20 @@
 //
 // Usage:
 //   node scripts/nightly-scan.mjs --out <dir> [--prev <dir>] [--countries us,de] [--genres 6013,6015]
+//                                 [--cache <dir>] [--gap <ms>]
 //
-// --prev is the previous output (the `data` branch); its ranks/ folder is used
-// for trends and carried forward. Uses the same scoring code as the app.
+// --prev   the previous output (the `data` branch); its ranks/ folder is used
+//          for trends and carried forward.
+// --cache  keep Apple's raw responses on disk and reuse them (for re-scoring
+//          locally without rescanning; pass --gap 0 to skip the pacing).
+// Uses the same scoring code as the app.
 
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import * as api from '../js/api.js';
 import { COUNTRIES, GENRES, GNAME } from '../js/constants.js';
-import { nicheReport, appGap, ratingBaseline, categoryScore, pickIdeas } from '../js/scoring.js';
+import { nicheReport, appGap, ratingBaseline, categoryScore, pickIdeas, isPlatformOwner } from '../js/scoring.js';
 
 const DAY = 86400000;
 const KEEP_RANK_DAYS = 8; // trend window: compare with ~7 days ago
@@ -28,6 +33,23 @@ if (!args.out) {
   console.error('Usage: node scripts/nightly-scan.mjs --out <dir> [--prev <dir>] [--countries us,de] [--genres 6013,6015]');
   process.exit(2);
 }
+if (args.gap !== undefined) api.setRequestGap(args.gap);
+
+// Optional on-disk cache of Apple's responses.
+if (args.cache) {
+  fs.mkdirSync(args.cache, { recursive: true });
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    const file = path.join(args.cache, crypto.createHash('sha1').update(String(url)).digest('hex') + '.json');
+    if (fs.existsSync(file)) return new Response(fs.readFileSync(file), { status: 200, headers: { 'content-type': 'application/json' } });
+    const res = await realFetch(url, init);
+    if (!res.ok) return res;
+    const body = Buffer.from(await res.arrayBuffer());
+    fs.writeFileSync(file, body);
+    return new Response(body, { status: res.status, headers: { 'content-type': 'application/json' } });
+  };
+}
+
 const pick = (list, arg, key) => (arg ? list.filter((x) => arg.split(',').includes(String(x[key]))) : list);
 const countries = pick(COUNTRIES, args.countries, 0).map((c) => c[0]);
 const genres = pick(GENRES, args.genres, 0).map((g) => String(g[0]));
@@ -72,36 +94,26 @@ function entryFor(a, g, prevList) {
   };
 }
 
-async function scanCategory(cc, gid) {
+async function fetchCategory(cc, gid) {
   const chart = await api.chart(cc, gid, 'grossing');
   if (!chart.length) return null;
   const details = await api.lookup(chart.map((c) => c.id), cc);
-  const apps = chart.map((c, i) => ({ ...c, ...(details.get(c.id) || {}), rank: i + 1, cc, genreChart: gid }));
-  const rep = nicheReport(apps, { isGrossing: true, now });
-  const baseline = ratingBaseline(apps);
-  const gaps = apps.map((a) => appGap(a, { rank: a.rank, baseline, now }));
-  const cat = categoryScore(rep, gaps.map((g) => g.gap));
-  const prevList = prev.base?.map?.[cc]?.[gid];
-  const entries = apps.map((a, i) => entryFor(a, gaps[i], prevList));
-  return { chartIds: chart.map((c) => c.id), rep, cat, entries, baseline };
+  return chart.map((c, i) => ({ ...c, ...(details.get(c.id) || {}), rank: i + 1, cc, genreChart: gid }));
 }
 
-const categories = [];
-const countryFiles = {};
-const ranksToday = {};
-const allEntries = [];
+// ---------- pass 1: read every chart ----------
+const charts = []; // { cc, gid, apps }
 const failures = [];
 const total = countries.length * genres.length;
 let done = 0;
 const started = Date.now();
 
 for (const cc of countries) {
-  countryFiles[cc] = { cc, generatedAt: new Date(now).toISOString(), categories: [] };
   for (const gid of genres) {
-    let res = null;
+    let apps = null;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        res = await scanCategory(cc, gid);
+        apps = await fetchCategory(cc, gid);
         break;
       } catch (e) {
         if (attempt === 0 && e instanceof api.RateLimitError) {
@@ -114,26 +126,57 @@ for (const cc of countries) {
       }
     }
     done++;
-    if (!res) continue;
-    const { chartIds, rep, cat, entries, baseline } = res;
-    (ranksToday[cc] ??= {})[gid] = chartIds;
-    allEntries.push(...entries);
-    const byGap = [...entries].sort((x, y) => y.gap - x.gap);
-    const smallEarner = entries.find((e) => e.r > 0 && e.r < 5000);
-    const row = {
-      cc, g: gid, s: cat.score, n: cat.niche, gt: cat.gapTop, sz: cat.sizeLabel,
-      bl: round2(baseline), sm: rep.small, fr: rep.fresh, st: rep.stale, md: Math.round(rep.medianRatings),
-      ideas: pickIdeas(rep.ideas.map((i) => i.text), GNAME[gid]),
-      ex: smallEarner ? { n: smallEarner.n, rk: smallEarner.rk, r: smallEarner.r } : null,
-      top: byGap[0] ? { n: byGap[0].n, gap: byGap[0].gap } : null,
-    };
-    categories.push(row);
-    countryFiles[cc].categories.push({ ...row, apps: byGap.slice(0, 10) });
+    if (apps) charts.push({ cc, gid, apps });
     if (done % 24 === 0 || done === total) {
       const mins = ((Date.now() - started) / 60000).toFixed(1);
       console.log(`  ${done}/${total} categories · ${mins} min · ${failures.length} failed`);
     }
   }
+}
+
+// ---------- worldwide size of every app ----------
+// Ratings are counted per country; add up each app's ratings across the countries it charts in.
+const perCountry = new Map(); // id -> Map(cc -> ratings)
+for (const { cc, apps } of charts) {
+  for (const a of apps) {
+    if (!perCountry.has(a.id)) perCountry.set(a.id, new Map());
+    const m = perCountry.get(a.id);
+    m.set(cc, Math.max(m.get(cc) || 0, a.ratings || 0));
+  }
+}
+const worldRatings = (id) => [...(perCountry.get(id)?.values() || [])].reduce((sum, r) => sum + r, 0);
+const chartsIn = (id) => perCountry.get(id)?.size || 0;
+
+// ---------- pass 2: score ----------
+const categories = [];
+const countryFiles = {};
+const ranksToday = {};
+const allEntries = [];
+
+for (const cc of countries) countryFiles[cc] = { cc, generatedAt: new Date(now).toISOString(), categories: [] };
+
+for (const { cc, gid, apps } of charts) {
+  const rep = nicheReport(apps, { isGrossing: true, now });
+  const baseline = ratingBaseline(apps);
+  const gaps = apps.map((a) => appGap(a, { rank: a.rank, baseline, now, genreId: gid, totalRatings: worldRatings(a.id) }));
+  const cat = categoryScore(rep, gaps.map((g, i) => (isPlatformOwner(apps[i].seller) ? 0 : g.gap)));
+  const prevList = prev.base?.map?.[cc]?.[gid];
+  const entries = apps
+    .map((a, i) => ({ ...entryFor(a, gaps[i], prevList), wr: worldRatings(a.id), ic2: chartsIn(a.id) }))
+    .filter((e) => !isPlatformOwner(e.s));
+  (ranksToday[cc] ??= {})[gid] = apps.map((a) => a.id);
+  allEntries.push(...entries);
+  const byGap = [...entries].sort((x, y) => y.gap - x.gap);
+  const smallEarner = entries.find((e) => e.r > 0 && e.r < 5000);
+  const row = {
+    cc, g: gid, s: cat.score, n: cat.niche, gt: cat.gapTop, sz: cat.sizeLabel,
+    bl: round2(baseline), sm: rep.small, fr: rep.fresh, st: rep.stale, md: Math.round(rep.medianRatings),
+    ideas: pickIdeas(rep.ideas.map((i) => i.text), GNAME[gid]),
+    ex: smallEarner ? { n: smallEarner.n, rk: smallEarner.rk, r: smallEarner.r } : null,
+    top: byGap[0] ? { n: byGap[0].n, gap: byGap[0].gap } : null,
+  };
+  categories.push(row);
+  countryFiles[cc].categories.push({ ...row, apps: byGap.slice(0, 10) });
 }
 
 if (failures.length > total * MAX_FAILURE_SHARE) {
@@ -146,13 +189,11 @@ if (failures.length > total * MAX_FAILURE_SHARE) {
 // The same app often ranks in many countries; keep its best entry and count the rest.
 function bestPerApp(list, better) {
   const best = new Map();
-  const count = new Map();
   for (const e of list) {
-    count.set(e.id, (count.get(e.id) || 0) + 1);
     const cur = best.get(e.id);
     if (!cur || better(e, cur)) best.set(e.id, e);
   }
-  return [...best.values()].map((e) => ({ ...e, ic2: count.get(e.id) }));
+  return [...best.values()];
 }
 
 const leaderboard = bestPerApp(allEntries, (a, b) => a.gap > b.gap)

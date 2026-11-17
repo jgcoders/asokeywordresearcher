@@ -187,8 +187,10 @@ export function nicheScore(report) {
  * `baseline` is the typical rating in the same chart (see ratingBaseline), because
  * people rate more generously in some countries than in others.
  */
-export function appGap(app, { rank = 100, baseline = 4.6, now = Date.now() } = {}) {
+export function appGap(app, { rank = 100, baseline = 4.6, now = Date.now(), genreId = '', totalRatings = 0 } = {}) {
   const ratings = app.ratings || 0;
+  // Size for "beatable": a global giant can have few ratings in one small country.
+  const sizeRatings = Math.max(ratings, totalRatings || 0);
   const money = Math.round(clamp(100 - 40 * Math.log10(Math.max(1, rank))));
   const demand = Math.round(clamp((Math.log10(ratings + 1) - 1) * 25));
 
@@ -202,13 +204,27 @@ export function appGap(app, { rank = 100, baseline = 4.6, now = Date.now() } = {
   const stale = days === Infinity ? 0 : clamp(((days - 180) / 550) * 100); // 6 months → 0, 2 years → 100
   const unhappy = Math.round(clamp(lowRating * 0.75 + stale * 0.5 + versionDrop * 0.4));
 
-  const beatable = Math.round(clamp(100 - (Math.log10(ratings + 1) - 3) * 50));
+  const beatable = Math.round(clamp(100 - (Math.log10(sizeRatings + 1) - 3) * 50));
+  const moat = MOAT_GENRES[String(genreId)] || 1;
   const gap = Math.round(
-    Math.pow(Math.max(money, 1), 0.35) * Math.pow(Math.max(demand, 1), 0.25)
+    moat * Math.pow(Math.max(money, 1), 0.35) * Math.pow(Math.max(demand, 1), 0.25)
     * Math.pow(Math.max(unhappy, 5), 0.3) * Math.pow(Math.max(beatable, 10), 0.1),
   );
-  return { gap, money, demand, unhappy, beatable, lowRating: Math.round(lowRating), versionDrop: Math.round(versionDrop), stale: Math.round(stale), days };
+  return { gap, money, demand, unhappy, beatable, moat, lowRating: Math.round(lowRating), versionDrop: Math.round(versionDrop), stale: Math.round(stale), days };
 }
+
+/**
+ * Categories where content rights or network effects protect the leaders
+ * (sports and TV streaming, news, social networks, music), so a better-made
+ * indie app rarely wins even when users are unhappy. Gap scores there are discounted.
+ */
+export const MOAT_GENRES = { 6009: 0.8, 6004: 0.8, 6005: 0.8, 6016: 0.85, 6011: 0.85 };
+
+/** Apple's own apps aren't competitors anyone can replace. */
+// Apple publishes under several legal entities: "Apple Inc.", "Apple Distribution International",
+// "Apple Services Pte. Ltd.", "Apple Japan, Inc." and so on.
+export const isPlatformOwner = (seller) => /^apple(\s+(inc\.?|distribution international\b.*|services\b.*|[a-z]+,?\s+(inc|ltd|limited|pte|gmbh|sarl|llc|k\.?k)\b.*))?$/i
+  .test(String(seller || '').trim());
 
 /** Typical rating in a chart: median of apps with enough ratings, kept between 4.3 and 4.8. */
 export function ratingBaseline(apps) {

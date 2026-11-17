@@ -6,7 +6,12 @@
 const BASE = 'https://itunes.apple.com';
 const CACHE_PREFIX = 'aof-cache:';
 const CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours
-const GAP_MS = 800; // minimum time between two requests to Apple
+let GAP_MS = 800; // minimum time between two requests to Apple
+
+/** For the nightly scan: change the spacing (e.g. 0 when replaying cached responses). */
+export function setRequestGap(ms) {
+  GAP_MS = Math.max(0, Number(ms) || 0);
+}
 
 export const CHARTS = {
   grossing: 'topgrossingapplications',

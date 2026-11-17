@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  keywordReport, nicheReport, nicheScore, appGap, ratingBaseline, categoryScore, pickIdeas, titleIdeas, titleMatches, appFlags, median, mostCommon, verdictFor, DAY,
+  keywordReport, nicheReport, nicheScore, appGap, ratingBaseline, categoryScore, pickIdeas, isPlatformOwner, titleIdeas, titleMatches, appFlags, median, mostCommon, verdictFor, DAY,
 } from '../js/scoring.js';
 
 const NOW = Date.parse('2026-11-15T00:00:00Z');
@@ -152,6 +152,26 @@ test('categoryScore blends niche room with the best gaps', () => {
 test('pickIdeas prefers phrases and drops category words', () => {
   assert.deepEqual(pickIdeas(['travel', 'flight tracker', 'flight', 'radar', 'plane radar', 'seat maps'], 'Travel'),
     ['flight tracker', 'plane radar', 'seat maps']);
+});
+
+test('isPlatformOwner matches Apple entities only', () => {
+  for (const s of ['Apple', 'Apple Inc.', 'Apple Distribution International', 'Apple Distribution International Ltd.', 'Apple Services Pte. Ltd.', 'Apple Japan, Inc.', 'Apple Canada Inc.']) {
+    assert.ok(isPlatformOwner(s), s);
+  }
+  for (const s of ['Applepie Games', 'Apple Seeds Studio', 'AppleTree Ltd', 'Pineapple Inc.', '', null]) {
+    assert.ok(!isPlatformOwner(s), String(s));
+  }
+});
+
+test('appGap: moat discount and worldwide size', () => {
+  const app = { ratings: 3000, rating: 3.2, updated: daysAgo(30) };
+  const plain = appGap(app, { rank: 3, baseline: 4.6, now: NOW, genreId: '6007' });
+  const sports = appGap(app, { rank: 3, baseline: 4.6, now: NOW, genreId: '6004' });
+  assert.equal(sports.moat, 0.8);
+  assert.ok(sports.gap < plain.gap);
+  const giant = appGap(app, { rank: 3, baseline: 4.6, now: NOW, genreId: '6007', totalRatings: 5000000 });
+  assert.equal(giant.beatable, 0);
+  assert.ok(giant.gap < plain.gap);
 });
 
 test('mostCommon', () => {

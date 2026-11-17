@@ -33,7 +33,9 @@ Treat scores as a way to find niches worth investigating, not as proof. Ratings 
 
 **Niche score** (All categories): room = small earners × 1.2 + new apps × 0.8 + neglected apps × 1.5 (capped at 100); size = typical top app's ratings on a log scale (1k = 33, 10k = 67, 100k = 100); score = room^0.6 × size^0.4. 65+ is **Promising**, 50–64 **Possible**. Market size is in the formula so tiny categories, where every app is small, don't win by default.
 
-**Gap score** (one app in a Top Grossing chart): money = Top Grossing rank on a log scale (#1 = 100, #10 = 60, #100 = 20); demand = ratings count on a log scale (1k = 50, 10k = 75); unhappy = how far the app's rating is below the typical rating in its chart (the median, kept between 4.3 and 4.8, because people rate more generously in some countries) plus months without an update; beatable = not a giant (1k ratings = 100, 10k = 50, 100k = 0). Gap = money^0.35 × demand^0.25 × unhappy^0.30 × beatable^0.10. 55+ is **Hot**, 40–54 **Worth a look**. Apple reports the current-version rating as equal to the all-time rating for nearly every app, so a drop between them rarely contributes.
+**Gap score** (one app in a Top Grossing chart): money = Top Grossing rank on a log scale (#1 = 100, #10 = 60, #100 = 20); demand = ratings count on a log scale (1k = 50, 10k = 75); unhappy = how far the app's rating is below the typical rating in its chart (the median, kept between 4.3 and 4.8, because people rate more generously in some countries) plus months without an update; beatable = not a giant (1k ratings = 100, 10k = 50, 100k = 0). Gap = money^0.35 × demand^0.25 × unhappy^0.30 × beatable^0.10. 55+ is **Hot**, 40–54 **Worth a look**.
+
+Two corrections keep the list useful for an independent developer: "beatable" uses an app's ratings added up across all 33 countries (so a global giant with few ratings in one small country isn't treated as small), and categories where content rights or network effects protect the leaders get a discount (Sports, News and Social Networking × 0.8; Entertainment and Music × 0.85). Apple's own apps are left out. Apple reports the current-version rating as equal to the all-time rating for nearly every app, so a drop between them rarely contributes.
 
 **Category score** = half the Niche score and half the average of the category's 5 highest Gap scores. 55+ is **Promising**, 45–54 **Possible**.
 
@@ -64,6 +66,10 @@ GitHub only runs scheduled workflows that are on the repository's **default bran
 
 ```sh
 node scripts/nightly-scan.mjs --out /tmp/scan --countries us,de --genres 6013,6015
+
+# keep Apple's raw responses, then re-score later without rescanning:
+node scripts/nightly-scan.mjs --out /tmp/scan --cache /tmp/apple-cache
+node scripts/nightly-scan.mjs --out /tmp/scan --cache /tmp/apple-cache --gap 0
 ```
 
 ## Complaint summaries and your API key

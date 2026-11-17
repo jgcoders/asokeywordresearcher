@@ -117,7 +117,7 @@ async function scanNiche(genreId, cc, type) {
   if (type === 'grossing') {
     const baseline = ratingBaseline(apps);
     apps.forEach((a) => {
-      const g = appGap(a, { rank: a.rank, baseline });
+      const g = appGap(a, { rank: a.rank, baseline, genreId });
       a.gapInfo = { gap: g.gap, money: g.money, demand: g.demand, unhappy: g.unhappy, beatable: g.beatable, rank: a.rank };
     });
   }
@@ -641,7 +641,8 @@ function autoOut() {
   if (!a.busy) {
     const best = res.filter((n) => n.verdict.key === 'strong').slice(0, 3).map((n) => n.name);
     const lead = best.length ? `Best bets in ${CNAME[state.country]}: <b>${best.map(esc).join(', ')}</b>.` : `No category in ${esc(CNAME[state.country])} scores as Promising right now. Look at the Possible ones.`;
-    parts.push(`<p class="read">${lead} ${source}${a.failed && res === live ? ` ${a.failed} ${a.failed === 1 ? 'category' : 'categories'} couldn't be loaded.` : ''}</p>`);
+    const china = state.country === 'cn' ? ' Note: to publish in China, Apple requires a government ICP filing for your app, which is hard for developers outside China.' : '';
+    parts.push(`<p class="read">${lead} ${source}${china}${a.failed && res === live ? ` ${a.failed} ${a.failed === 1 ? 'category' : 'categories'} couldn't be loaded.` : ''}</p>`);
   }
   parts.push(`<ol class="niche-list">${res.map((n, i) => nicheCard(n, i + 1)).join('')}</ol>`);
   parts.push('<p class="note">Score = half room for small apps (small earners, new and neglected apps, weighed against market size) and half the average of the 5 biggest Gap scores. 55+ Promising, 45–54 Possible. Tap a keyword to score it.</p>');
