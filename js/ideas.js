@@ -113,20 +113,20 @@ export function readiness(idea) {
 }
 
 /** Plain-text export for pasting into notes or a message. */
-export function ideasToText(list, { countryName = (c) => c.toUpperCase(), now = Date.now() } = {}) {
+export function ideasToText(list, { countryName = (c) => c.toUpperCase(), now = Date.now(), t = (x, v) => (v ? x.replace(/\{(\w+)\}/g, (m, k) => v[k] ?? m) : x) } = {}) {
   const day = (t) => new Date(t).toISOString().slice(0, 10);
   const blocks = list.map((i) => {
     const r = readiness(i);
-    const lines = [`## ${i.name} (${STATUS_LABEL[i.status] || i.status})`];
-    if (i.kw) lines.push(`Keyword: ${i.kw} (${countryName(i.cc)})${i.category ? ` · ${i.category}` : ''}`);
-    if (i.snapshot) lines.push(`Score: ${i.snapshot.opp} (Demand ${i.snapshot.demand} · Ease ${i.snapshot.ease} · Money ${i.snapshot.money}), checked ${day(i.snapshot.at)}`);
-    if (i.priceModel || i.price) lines.push(`Charging: ${[PRICE_LABEL[i.priceModel] || '', i.price].filter(Boolean).join(', ')}`);
-    if (i.why) lines.push(`Why I'd win: ${i.why}`);
-    if (i.summary?.pitch) lines.push(`Pitch: ${i.summary.pitch}`);
-    if (i.summary?.complaints?.length) lines.push(`Top complaints: ${i.summary.complaints.map((c) => `${c.theme} (${c.mentions})`).join(', ')}`);
-    if (i.notes) lines.push(`Notes: ${i.notes}`);
-    lines.push(`Ready: ${r.done}/${r.total}`);
+    const lines = [`## ${i.name || t('Untitled idea')} (${t(STATUS_LABEL[i.status] || i.status)})`];
+    if (i.kw) lines.push(`${t('Keyword')}: ${i.kw} (${countryName(i.cc)})${i.category ? ` · ${t(i.category)}` : ''}`);
+    if (i.snapshot) lines.push(t('Score: {opp} (Demand {d} · Ease {e} · Money {m}), checked {date}', { opp: i.snapshot.opp, d: i.snapshot.demand, e: i.snapshot.ease, m: i.snapshot.money, date: day(i.snapshot.at) }));
+    if (i.priceModel || i.price) lines.push(`${t('Charging')}: ${[t(PRICE_LABEL[i.priceModel] || ''), i.price].filter(Boolean).join(', ')}`);
+    if (i.why) lines.push(`${t("Why I'd win")}: ${i.why}`);
+    if (i.summary?.pitch) lines.push(`${t('Pitch')}: ${i.summary.pitch}`);
+    if (i.summary?.complaints?.length) lines.push(`${t('Top complaints')}: ${i.summary.complaints.map((c) => `${c.theme} (${c.mentions})`).join(', ')}`);
+    if (i.notes) lines.push(`${t('Notes')}: ${i.notes}`);
+    lines.push(`${t('Ready')}: ${r.done}/${r.total}`);
     return lines.join('\n');
   });
-  return [`# App ideas (${day(now)})`, ...blocks].join('\n\n');
+  return [`# ${t('App ideas')} (${day(now)})`, ...blocks].join('\n\n');
 }

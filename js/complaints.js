@@ -5,6 +5,7 @@
 // this device's localStorage and sent only to api.anthropic.com.
 
 import * as api from './api.js';
+import { t, cnt, lang } from './i18n.js';
 
 export const MODEL = 'claude-haiku-5-5';
 export const MODEL_LABEL = 'Claude Haiku 5.5';
@@ -31,7 +32,8 @@ export function setKey(key) {
 }
 
 // ---------- cache ----------
-const cacheKey = (kw, cc) => `${CACHE_PREFIX}${cc}|${kw.trim().toLowerCase()}`;
+// Summaries are written in the interface language, so cache them per language.
+const cacheKey = (kw, cc) => `${CACHE_PREFIX}${cc}|${kw.trim().toLowerCase()}${lang === 'en' ? '' : `|${lang}`}`;
 
 export function getCached(kw, cc) {
   try {
@@ -115,7 +117,7 @@ export async function collectReviews(apps, cc, onProgress = () => {}) {
       const bad = all.filter((r) => r.stars <= 3);
       out.push({ app: top[i], reviews: bad, read: all.length });
     } catch (e) {
-      if (e instanceof api.RateLimitError) throw new SummaryError('Apple is limiting requests right now. Wait a minute, then try again.');
+      if (e instanceof api.RateLimitError) throw new SummaryError(t('Apple is limiting requests right now. Wait a minute, then try again.'));
       out.push({ app: top[i], reviews: [], read: 0 });
     }
   }
@@ -140,24 +142,24 @@ function buildPrompt(keyword, countryName, groups) {
  * Summarize complaints for a keyword result. Uses the cache unless `fresh`.
  * Returns { at, result, reviewCount, appCount, apps, cost, model }.
  */
-export async function summarize({ keyword, country, countryName, apps, fresh = false, onStep = () => {} }) {
+export async function summarize({ keyword, country, countryName, apps, fresh = false, language = 'en', onStep = () => {} }) {
   if (!fresh) {
     const hit = getCached(keyword, country);
     if (hit) return hit;
   }
   const key = getKey();
-  if (!key) throw new SummaryError('Add your Anthropic API key first.', { needsKey: true });
+  if (!key) throw new SummaryError(t('Add your Anthropic API key first.'), { needsKey: true });
 
-  const groups = await collectReviews(apps, country, (i, n, name) => onStep(`Reading reviews of ${name} (${i + 1} of ${n})…`));
+  const groups = await collectReviews(apps, country, (i, n, name) => onStep(t('Reading reviews of {name} ({i} of {n})…', { name, i: i + 1, n })));
   const reviewCount = groups.reduce((s, g) => s + g.reviews.length, 0);
   if (reviewCount < MIN_REVIEWS) {
     const fed = groups.filter((g) => g.read > 0).length;
     throw new SummaryError(fed === 0
-      ? `Apple's review feed returned no reviews for any of the top ${groups.length} apps, so there's nothing to summarize. Nothing was sent to Claude. Try another keyword or country.`
-      : `Only ${reviewCount} recent 1–3 star ${reviewCount === 1 ? 'review' : 'reviews'} came back (Apple returned reviews for ${fed} of ${groups.length} apps). That's too few to summarize, so nothing was sent to Claude.`);
+      ? t("Apple's review feed returned no reviews for any of the top {n} apps, so there's nothing to summarize. Nothing was sent to Claude. Try another keyword or country.", { n: groups.length })
+      : t("Only {reviews} came back (Apple returned reviews for {fed} of {n} apps). That's too few to summarize, so nothing was sent to Claude.", { reviews: cnt(reviewCount, 'review'), fed, n: groups.length }));
   }
 
-  onStep(`${MODEL_LABEL} is reading ${reviewCount} reviews…`);
+  onStep(t('{model} is reading {reviews}…', { model: MODEL_LABEL, reviews: cnt(reviewCount, 'review') }));
   const { Anthropic, betaJSONSchemaOutputFormat } = await loadSdk();
   const client = new Anthropic({ apiKey: key, dangerouslyAllowBrowser: true });
 
@@ -168,17 +170,17 @@ export async function summarize({ keyword, country, countryName, apps, fresh = f
       max_tokens: 16000,
       // Claude Haiku 5.5 has no server-side fallback; a decline is handled below.
       output_config: { effort: 'medium', format: betaJSONSchemaOutputFormat(SCHEMA) },
-      system: SYSTEM,
+      system: language === 'pl' ? `${SYSTEM}\n\nWrite every text field in Polish. Keep the quotes verbatim in the language of the review, and keep app names as they are.` : SYSTEM,
       messages: [{ role: 'user', content: buildPrompt(keyword, countryName, groups) }],
     });
   } catch (e) {
     throw toSummaryError(e, Anthropic);
   }
 
-  if (res.stop_reason === 'refusal') throw new SummaryError('Claude declined to summarize these reviews. Try another keyword.');
-  if (res.stop_reason === 'max_tokens') throw new SummaryError('The summary was cut off. Tap Summarize again.');
+  if (res.stop_reason === 'refusal') throw new SummaryError(t('Claude declined to summarize these reviews. Try another keyword.'));
+  if (res.stop_reason === 'max_tokens') throw new SummaryError(t('The summary was cut off. Tap Summarize again.'));
   const result = res.parsed_output;
-  if (!result) throw new SummaryError("Claude's answer couldn't be read. Tap Summarize again.");
+  if (!result) throw new SummaryError(t("Claude's answer couldn't be read. Tap Summarize again."));
 
   const u = res.usage || {};
   const promptTokens = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0);
@@ -199,12 +201,12 @@ export async function summarize({ keyword, country, countryName, apps, fresh = f
 }
 
 function toSummaryError(e, Anthropic) {
-  if (e instanceof Anthropic.AuthenticationError) return new SummaryError('Your API key was not accepted. Check it and paste it again.', { needsKey: true });
-  if (e instanceof Anthropic.PermissionDeniedError) return new SummaryError("Your API key doesn't have access to this model.");
-  if (e instanceof Anthropic.RateLimitError) return new SummaryError('Your Anthropic account hit its rate limit. Try again in a minute.');
-  if (e instanceof Anthropic.BadRequestError) return new SummaryError(`Anthropic rejected the request: ${e.message}`);
-  if (e instanceof Anthropic.InternalServerError) return new SummaryError('Claude is temporarily unavailable. Try again in a minute.');
-  if (e instanceof Anthropic.APIConnectionError) return new SummaryError("Couldn't reach Anthropic. Check your connection and try again.");
-  if (e instanceof Anthropic.APIError) return new SummaryError(`Anthropic returned an error (${e.status}). Try again in a minute.`);
-  return new SummaryError("Couldn't summarize the reviews. Try again in a minute.");
+  if (e instanceof Anthropic.AuthenticationError) return new SummaryError(t('Your API key was not accepted. Check it and paste it again.'), { needsKey: true });
+  if (e instanceof Anthropic.PermissionDeniedError) return new SummaryError(t("Your API key doesn't have access to this model."));
+  if (e instanceof Anthropic.RateLimitError) return new SummaryError(t('Your Anthropic account hit its rate limit. Try again in a minute.'));
+  if (e instanceof Anthropic.BadRequestError) return new SummaryError(t('Anthropic rejected the request: {msg}', { msg: e.message }));
+  if (e instanceof Anthropic.InternalServerError) return new SummaryError(t('Claude is temporarily unavailable. Try again in a minute.'));
+  if (e instanceof Anthropic.APIConnectionError) return new SummaryError(t("Couldn't reach Anthropic. Check your connection and try again."));
+  if (e instanceof Anthropic.APIError) return new SummaryError(t('Anthropic returned an error ({status}). Try again in a minute.', { status: e.status }));
+  return new SummaryError(t("Couldn't summarize the reviews. Try again in a minute."));
 }

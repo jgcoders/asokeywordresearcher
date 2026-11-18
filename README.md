@@ -20,6 +20,13 @@ It runs entirely in the browser. There is no server and no API key: it reads App
 | **Keyword → What users complain about** | Optional. Claude (Haiku 5.5) reads the recent 1–3 star reviews of the top 10 apps and returns the main complaint themes with counts and quotes, features a new app could win with, what users say about price and ads, and a one-line pitch. Uses your own Anthropic API key, billed to your Anthropic account (usually well under 1¢). Results are kept on the device for 7 days. |
 | **App details** | Tap any app to see its stats and its recent 1–3 star reviews, which show what users want fixed. |
 
+## Language, help and the guide
+
+- **English and Polish.** The app picks Polish when the phone is set to Polish; switch any time in the welcome screen or **Saved → Settings**. Complaint summaries from Claude are written in the chosen language. Translations live in `js/i18n.js` (English text is the key, so anything missing falls back to English); `tests/i18n.test.mjs` fails if a visible text has no Polish translation.
+- **ⓘ buttons** next to every score and section open a short explanation.
+- **Welcome tutorial** (3 screens) on first launch; show it again from **Saved → Settings**.
+- **Guide: "Find your app idea"** in 8 steps (country → category → top apps → keyword → countries → complaints → idea → ready to build). Steps tick themselves off as you use the app, and **Go** takes you to the right screen. On a phone it opens from the Guide button; on a wide screen it stays open beside the app. Progress is stored on the device.
+
 ## How the scores work
 
 Apple publishes no download or search-volume numbers, so the scores use stand-ins:
